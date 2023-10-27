@@ -1,0 +1,4 @@
+gin.log
+config.yaml
+*.db
+.idea/
