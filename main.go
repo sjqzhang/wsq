@@ -44,6 +44,11 @@ type Response struct {
 	Msg  string      `json:"message"`
 }
 
+type Conn struct {
+	sync.RWMutex
+	*websocket.Conn
+}
+
 type NocIncident struct {
 	ID              int             `json:"id"`
 	IncidentID      string          `json:"incident_id"`
@@ -141,7 +146,7 @@ func InitConfig() {
 }
 
 func InitHub() {
-	hubLocal= newHub()
+	hubLocal = newHub()
 }
 
 func InitDB() {
@@ -164,12 +169,12 @@ func InitRedis() {
 
 func init() {
 
-	bus.Subscribe(WEBSOCKET_MESSAGE, 50, func(ctx context.Context, message interface{}) {
+	bus.Subscribe(WEBSOCKET_MESSAGE, 1, func(ctx context.Context, message interface{}) {
 		if message == nil {
 			return
 		}
 		if v, ok := message.(Subscription); ok {
-			hubLocal.SendMessage(v)
+			go hubLocal.SendMessage(v)
 		}
 	})
 }
@@ -230,26 +235,35 @@ func newHub() *hub {
 }
 
 func (h *hub) SendMessage(subscription Subscription) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(err)
+		}
+	}()
 	if subscription.Action == "response" {
 		if v, ok := h.reqs.Load(subscription.ID); ok {
-			v.(*websocket.Conn).SetWriteDeadline(time.Now().Add(time.Second * 2))
-			err := v.(*websocket.Conn).WriteJSON(subscription)
+			v.(*Conn).Lock()
+			defer v.(*Conn).Unlock()
+			err := v.(*Conn).WriteJSON(subscription)
+			fmt.Println(fmt.Sprintf("write:%v,err:%v", subscription, err))
 			if isNetError(err) {
-				h.RemoveFailedConn(v.(*websocket.Conn))
+				h.RemoveFailedConn(v.(*Conn))
 			}
-			h.reqs.Delete(subscription.ID)
 		}
+		h.reqs.Delete(subscription.ID)
 		return
 	}
 
 	key := fmt.Sprintf("%s_$_%s", subscription.Topic, subscription.ID)
 	if m, ok := h.subs.Load(key); ok {
 		for _, conn := range m.(mapset.Set).ToSlice() {
-			conn.(*websocket.Conn).SetWriteDeadline(time.Now().Add(time.Second * 2))
-			err := conn.(*websocket.Conn).WriteJSON(subscription)
+			conn.(*Conn).Lock()
+			conn.(*Conn).SetWriteDeadline(time.Now().Add(time.Second * 2))
+			err := conn.(*Conn).WriteJSON(subscription)
+			conn.(*Conn).Unlock()
 			if isNetError(err) {
-				h.Unsubscribe(conn.(*websocket.Conn), subscription)
-				h.RemoveFailedConn(conn.(*websocket.Conn))
+				h.Unsubscribe(conn.(*Conn), subscription)
+				h.RemoveFailedConn(conn.(*Conn))
 			}
 
 		}
@@ -261,17 +275,30 @@ func (h *hub) Run() {
 	for {
 		logger.Println("Goroutines", runtime.NumGoroutine(), "Cardinality", h.conns.Cardinality())
 		time.Sleep(time.Second * 10)
-		for _, c := range h.conns.ToSlice() {
-			c.(*websocket.Conn).SetWriteDeadline(time.Now().Add(time.Second * 2))
-			err := c.(*websocket.Conn).WriteMessage(websocket.PingMessage, []byte{})
+		pingFunc := func(c *Conn) {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Println(err)
+				}
+			}()
+			c.Lock()
+			defer c.Unlock()
+			err := c.WriteMessage(websocket.PingMessage, []byte{})
 			if isNetError(err) {
-				h.RemoveFailedConn(c.(*websocket.Conn))
+				h.RemoveFailedConn(c)
 			}
+
+		}
+		for _, c := range h.conns.ToSlice() {
+			if v, ok := c.(*Conn); ok {
+				pingFunc(v)
+			}
+
 		}
 	}
 }
 
-func (h *hub) Subscribe(conn *websocket.Conn, subscription Subscription) {
+func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
 	if subscription.Action == "request" {
 		ctx := context.Background()
 		rdb.Pipelined(ctx, func(pipeliner redis.Pipeliner) error {
@@ -313,7 +340,8 @@ func (h *hub) Subscribe(conn *websocket.Conn, subscription Subscription) {
 }
 
 // unsubscribe from a topic
-func (h *hub) Unsubscribe(conn *websocket.Conn, subscription Subscription) {
+func (h *hub) Unsubscribe(conn *Conn, subscription Subscription) {
+	fmt.Println("closing", conn.RemoteAddr())
 	key := fmt.Sprintf("%s_$_%s", subscription.Topic, subscription.ID)
 	if m, ok := h.subs.Load(key); ok {
 		m.(mapset.Set).Remove(conn)
@@ -326,11 +354,11 @@ func (h *hub) Unsubscribe(conn *websocket.Conn, subscription Subscription) {
 }
 
 // unsubscribe from a topic
-func (h *hub) RemoveFailedConn(conn *websocket.Conn) {
+func (h *hub) RemoveFailedConn(conn *Conn) {
 	go func() {
 		h.subs.Range(func(key, value interface{}) bool {
 			for _, con := range value.(mapset.Set).ToSlice() {
-				c := con.(*websocket.Conn)
+				c := con.(*Conn)
 				if c == conn {
 					if m, ok := h.subs.Load(key); ok {
 						m.(mapset.Set).Remove(conn)
@@ -369,7 +397,7 @@ func isNetError(err error) bool {
 	return false
 }
 
-func readMessages(conn *websocket.Conn) {
+func readMessages(conn *Conn) {
 
 	defer func() {
 		if err := recover(); err != nil {
@@ -380,7 +408,9 @@ func readMessages(conn *websocket.Conn) {
 	for {
 		// 读取客户端发来的消息
 		//conn.SetReadDeadline(time.Now().Add(time.Second * 10))
+		conn.RLock()
 		messageType, message, err := conn.ReadMessage()
+		conn.RUnlock()
 		if err != nil {
 			if isNetError(err) {
 				hubLocal.RemoveFailedConn(conn)
@@ -413,7 +443,7 @@ func readMessages(conn *websocket.Conn) {
 	}
 }
 
-func handleMessages(conn *websocket.Conn, subscription Subscription) {
+func handleMessages(conn *Conn, subscription Subscription) {
 	hubLocal.Subscribe(conn, subscription)
 } // 获取订阅
 
@@ -458,7 +488,11 @@ func main() {
 			logger.Println("Failed to upgrade connection:", err)
 			return
 		}
-		go readMessages(conn)
+		con := &Conn{
+			Conn:    conn,
+			RWMutex: sync.RWMutex{},
+		}
+		go readMessages(con)
 	})
 
 	router.GET("/ws/noc_incident", func(c *gin.Context) {

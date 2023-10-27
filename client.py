@@ -5,16 +5,36 @@ import websocket
 import uuid
 import json
 import random
-ws=websocket.WebSocket()
+import threading
+ws=websocket.WebSocket(enable_multithread=True)
 
-ws.connect("ws://localhost:8866/ws")
-msg={'action': 'request', 'topic': 'test','id':str(uuid.uuid4()),'message': 'hello'}
-ws.send(json.dumps(msg))
+ws.connect("ws://192.168.1.12:8866/ws")
+# msg={'action': 'request', 'topic': 'test','id':str(uuid.uuid4()),'message': 'hello'}
+# ws.send(json.dumps(msg))
+
+i=0
+def write():
+
+    while True:
+        global i
+        topics=['test','test1','test2']
+        topic=random.choice(topics)
+        msg={'action': 'request', 'topic': topic,'id':str(uuid.uuid4()),'message': 'hello'}
+        ws.send(json.dumps(msg))
+        i=i+1
+        print(i)
+        # if i>10:
+        #     break
+
+        time.sleep(0.01)
 
 
-while True:
-    topics=['test','test1','test2']
-    topic=random.choice(topics)
-    msg={'action': 'request', 'topic': topic,'id':str(uuid.uuid4()),'message': 'hello'}
-    ws.send(json.dumps(msg))
-    time.sleep(1)
+def read():
+    while True:
+        resp=ws.recv()
+        print(resp)
+        # time.sleep(0.02)
+
+
+threading.Thread(target=read).start()
+threading.Thread(target=write).start()
