@@ -3,6 +3,7 @@ module github.com/sjqzhang/wsq
 go 1.18
 
 require (
+	github.com/alicebob/miniredis/v2 v2.31.0
 	github.com/deckarep/golang-set v1.8.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/gorilla/websocket v1.5.0
@@ -16,6 +17,7 @@ require (
 )
 
 require (
+	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/bytedance/sonic v1.9.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
@@ -45,6 +47,7 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
+	github.com/yuin/gopher-lua v1.1.0 // indirect
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/crypto v0.13.0 // indirect
 	golang.org/x/net v0.15.0 // indirect

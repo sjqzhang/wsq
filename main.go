@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/alicebob/miniredis/v2"
 	mapset "github.com/deckarep/golang-set"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -37,6 +38,8 @@ var db *gorm.DB
 var config Config
 
 var rdb *redis.Client
+
+var rs *miniredis.Miniredis
 
 type Response struct {
 	Code int         `json:"code"`
@@ -160,6 +163,14 @@ func InitDB() {
 }
 
 func InitRedis() {
+
+	rs=miniredis.NewMiniRedis()
+
+	rs.StartAddr(":6380")
+
+	rs.Start()
+
+
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     config.Redis.Addr,
 		Password: config.Redis.Password,
@@ -244,6 +255,7 @@ func (h *hub) SendMessage(subscription Subscription) {
 		if v, ok := h.reqs.Load(subscription.ID); ok {
 			v.(*Conn).Lock()
 			defer v.(*Conn).Unlock()
+			v.(*Conn).SetWriteDeadline(time.Now().Add(time.Second * 2))
 			err := v.(*Conn).WriteJSON(subscription)
 			fmt.Println(fmt.Sprintf("write:%v,err:%v", subscription, err))
 			if isNetError(err) {

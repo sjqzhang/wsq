@@ -2,13 +2,13 @@
 import concurrent.futures
 import json
 import threading
-from queue import Queue
 import time
+from queue import Queue
 
 import redis
 import requests
 
-r = redis.Redis(host='localhost', port=6379, db=0)
+r = redis.Redis(host='localhost', port=6380, db=0)
 
 sub = r.pubsub()
 
@@ -16,14 +16,25 @@ topic_handle_map = {}
 
 
 def handler_test(message):
-    return time.time()
+    # time.sleep(0.01)
+    return message
 
 
 topic_handle_map['test'] = handler_test
 topic_handle_map['test1'] = handler_test
 topic_handle_map['test2'] = handler_test
 
-sub.subscribe(list(r.smembers('Topics')))
+
+def fresh_subscribe():
+    while True:
+        topics=list(r.smembers('Topics'))
+        if len(topics)>0:
+            sub.subscribe(topics)
+        time.sleep(1)
+
+
+threading.Thread(target=fresh_subscribe).start()
+
 
 print(sub.channels)
 
@@ -32,6 +43,9 @@ q = Queue()
 
 def redis_subscribe():
     while True:
+        if len(sub.channels)==0:
+            time.sleep(0.01)
+            continue
         msg = sub.get_message()
         if msg:
             # 去掉"Topic_" 前缀
@@ -43,16 +57,21 @@ threading.Thread(target=redis_subscribe).start()
 
 
 def wrap_result(message, result):
-    url=message.get('callback_url')
+    url = message.get('callback_url')
     if not url:
         return
     message['id'] = message.get('id')
     message['topic'] = message.get('topic')
-    message['action'] ='response'
-    message['message'] = result
+    message['action'] = 'response'
+    # message['message'] =  message.get('id')
+    message['message'] = {
+        'id': message.get('id'),
+        'ts': time.time_ns() - result,
+        'origin_ts': result,
+    }
     message = json.dumps(message)
-    resp=requests.post(url, data=message)
-    print(resp.text)
+    resp = requests.post(url, data=message)
+    # print(resp.text)
 
 
 def consumer():
@@ -70,10 +89,10 @@ def consumer():
 
 
 # 创建线程池
-thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=400)
 
 # 启动多个线程消费队列
-for _ in range(4):
+for _ in range(40):
     thread_pool.submit(consumer)
 
 # 等待线程池中的所有任务完成

@@ -19,22 +19,23 @@ def write():
         global i
         topics=['test','test1','test2']
         topic=random.choice(topics)
-        msg={'action': 'request', 'topic': topic,'id':str(uuid.uuid4()),'message': 'hello'}
+        msg={'action': 'request', 'topic': topic,'id':str(uuid.uuid4()),'message': time.time_ns()}
         ws.send(json.dumps(msg))
         i=i+1
-        print(i)
+        # print(i)
         # if i>10:
         #     break
 
-        time.sleep(0.01)
+        # time.sleep(1)
 
 
 def read():
     while True:
         resp=ws.recv()
-        print(resp)
+        resp=json.loads(resp)
+        print((time.time_ns()- resp['message']['origin_ts'])/1000000)
         # time.sleep(0.02)
 
-
-threading.Thread(target=read).start()
 threading.Thread(target=write).start()
+threading.Thread(target=read).start()
+
