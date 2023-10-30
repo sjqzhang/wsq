@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 
 	"strings"
 	"sync"
@@ -329,7 +330,6 @@ func (h *hub) SendMessage(subscription Subscription) {
 			//v.(*Conn).Lock()
 			//defer v.(*Conn).Unlock()
 
-
 			data, err := json.Marshal(subscription)
 			if err != nil {
 				return
@@ -353,30 +353,30 @@ func (h *hub) SendMessage(subscription Subscription) {
 }
 
 func (h *hub) Run() {
-	//for {
-	//	logger.Println("Goroutines", runtime.NumGoroutine(), "Cardinality", h.conns.Cardinality())
-	//	time.Sleep(time.Second * 10)
-	//	pingFunc := func(c *Conn) {
-	//		c.Lock()
-	//		defer c.Unlock()
-	//		defer func() {
-	//			if err := recover(); err != nil {
-	//				log.Println(err)
-	//			}
-	//		}()
-	//		err := c.WriteMessage(websocket.PingMessage, []byte{})
-	//		if isNetError(err) {
-	//			h.RemoveFailedConn(c)
-	//		}
-	//
-	//	}
-	//	for _, c := range h.conns.ToSlice() {
-	//		if v, ok := c.(*Conn); ok {
-	//			pingFunc(v)
-	//		}
-	//
-	//	}
-	//}
+	for {
+		logger.Println("Goroutines", runtime.NumGoroutine(), "Cardinality", h.conns.Cardinality())
+		time.Sleep(time.Second * 10)
+		pingFunc := func(c *Conn) {
+			c.Lock()
+			defer c.Unlock()
+			defer func() {
+				if err := recover(); err != nil {
+					log.Println(err)
+				}
+			}()
+			err := c.WriteMessage(websocket.PingMessage, []byte{})
+			if isNetError(err) {
+				h.RemoveFailedConn(c)
+			}
+
+		}
+		for _, c := range h.conns.ToSlice() {
+			if v, ok := c.(*Conn); ok {
+				pingFunc(v)
+			}
+
+		}
+	}
 }
 
 func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
@@ -438,20 +438,11 @@ func (h *hub) Unsubscribe(conn *Conn, subscription Subscription) {
 // unsubscribe from a topic
 func (h *hub) RemoveFailedConn(conn *Conn) {
 	go func() {
-		//h.subs.Range(func(key, value interface{}) bool {
-		//	for _, con := range value.(mapset.Set).ToSlice() {
-		//		c := con.(*Conn)
-		//		if c == conn {
-		//			if m, ok := h.subs.Load(key); ok {
-		//				m.(mapset.Set).Remove(conn)
-		//				h.subs.Store(key, m)
-		//			}
-		//		}
-		//	}
-		//	return true
-		//})
-		//h.conns.Remove(conn)
-
+		defer func() {
+			if err := recover(); err != nil {
+				log.Println(err)
+			}
+		}()
 		for k, v := range h.subs.LoadAll() {
 			for _, con := range v.(mapset.Set).ToSlice() {
 				c := con.(*Conn)
@@ -538,6 +529,7 @@ func readMessages(conn *Conn) {
 }
 
 func writeMessages(con *Conn) {
+	tick := time.NewTicker(time.Second * 10)
 	for {
 		select {
 		case message, ok := <-con.send:
@@ -551,6 +543,15 @@ func writeMessages(con *Conn) {
 			if isNetError(err) {
 				hubLocal.RemoveFailedConn(con)
 			}
+		case <-tick.C:
+			//ping current connection
+			con.Lock()
+			err := con.WriteMessage(websocket.PingMessage, []byte{})
+			con.Unlock()
+			if isNetError(err) {
+				hubLocal.RemoveFailedConn(con)
+			}
+
 		}
 	}
 
