@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+
+	//"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +78,11 @@ type Config struct {
 	Server struct {
 		Port int `mapstructure:"port" yaml:"port"`
 	} `yaml:"server"`
+	EmbedRedis struct {
+		Addr     string `mapstructure:"addr" yaml:"addr"`
+		Password string `mapstructure:"password" yaml:"password"`
+		DB       int    `mapstructure:"db" yaml:"db"`
+	} `yaml:"embedRedis"`
 	Database struct {
 		DbType string `mapstructure:"db_type" yaml:"db_type"`
 		Dsn    string `mapstructure:"dsn" yaml:"dsn"`
@@ -107,6 +114,15 @@ func InitConfig() {
 				}{
 					Port: 8866,
 				},
+				EmbedRedis: struct {
+					Addr     string `mapstructure:"addr" yaml:"addr"`
+					Password string `mapstructure:"password" yaml:"password"`
+					DB       int    `mapstructure:"db" yaml:"db"`
+				}{
+					Addr:     ":6380",
+					Password: "",
+					DB:       0,
+				},
 				Database: struct {
 					DbType string `mapstructure:"db_type" yaml:"db_type"`
 					Dsn    string `mapstructure:"dsn" yaml:"dsn"`
@@ -119,7 +135,7 @@ func InitConfig() {
 					Password string `mapstructure:"password" yaml:"password"`
 					DB       int    `mapstructure:"db" yaml:"db"`
 				}{
-					Addr:     "localhost:6379",
+					Addr:     "127.0.0.1:6380",
 					Password: "",
 					DB:       0,
 				},
@@ -144,7 +160,10 @@ func InitConfig() {
 			return
 		}
 	}
-	viper.Unmarshal(&config)
+	err=viper.Unmarshal(&config)
+	if err != nil {
+		panic(err)
+	}
 
 }
 
@@ -164,12 +183,19 @@ func InitDB() {
 
 func InitRedis() {
 
-	rs=miniredis.NewMiniRedis()
+	rs = miniredis.NewMiniRedis()
 
-	rs.StartAddr(":6380")
+	rs.StartAddr(config.EmbedRedis.Addr)
 
-	rs.Start()
+	if config.EmbedRedis.Password != "" {
+		rs.RequireAuth(config.EmbedRedis.Password)
+	}
 
+	rs.DB(config.EmbedRedis.DB)
+
+	if err := rs.Start(); err != nil {
+		panic(err)
+	}
 
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     config.Redis.Addr,
@@ -199,17 +225,19 @@ var upgrader = websocket.Upgrader{
 
 // 订阅消息的结构体
 type Subscription struct {
-	Action  string      `json:"action"`
-	Topic   string      `json:"topic"`
-	ID      string      `json:"id"`
-	Message interface{} `json:"message"`
+	Action  string            `json:"action"`
+	Topic   string            `json:"topic"`
+	ID      string            `json:"id"`
+	Message interface{}       `json:"message"`
+	Header  map[string]string `json:"header"`
 }
 
 type Message struct {
-	Topic       string      `json:"topic"`
-	Message     interface{} `json:"message"`
-	ID          string      `json:"id"`
-	CallbackURL string      `json:"callback_url"`
+	Topic       string            `json:"topic"`
+	Message     interface{}       `json:"message"`
+	ID          string            `json:"id"`
+	CallbackURL string            `json:"callback_url"`
+	Header      map[string]string `json:"header"`
 }
 
 type hub struct {
@@ -248,6 +276,7 @@ func newHub() *hub {
 func (h *hub) SendMessage(subscription Subscription) {
 	defer func() {
 		if err := recover(); err != nil {
+			panic(err)
 			log.Println(err)
 		}
 	}()
@@ -288,13 +317,13 @@ func (h *hub) Run() {
 		logger.Println("Goroutines", runtime.NumGoroutine(), "Cardinality", h.conns.Cardinality())
 		time.Sleep(time.Second * 10)
 		pingFunc := func(c *Conn) {
+			c.Lock()
+			defer c.Unlock()
 			defer func() {
 				if err := recover(); err != nil {
 					log.Println(err)
 				}
 			}()
-			c.Lock()
-			defer c.Unlock()
 			err := c.WriteMessage(websocket.PingMessage, []byte{})
 			if isNetError(err) {
 				h.RemoveFailedConn(c)
@@ -330,7 +359,7 @@ func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
 			pipeliner.SAdd(ctx, "Topics", topic)
 			pipeliner.LPush(ctx, subscription.Topic, data)
 			pipeliner.Publish(ctx, topic, "")
-			pipeliner.LTrim(ctx, subscription.Topic, 0, 100)
+			pipeliner.LTrim(ctx, subscription.Topic, 0, 100000)
 			if _, err := pipeliner.Exec(ctx); err == nil {
 				h.reqs.Store(subscription.ID, conn)
 			}
