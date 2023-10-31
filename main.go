@@ -43,7 +43,7 @@ var rdb *redis.Client
 var rs *miniredis.Miniredis
 
 type Response struct {
-	Code int         `json:"code"`
+	Code int         `json:"retcode"`
 	Data interface{} `json:"data"`
 	Msg  string      `json:"message"`
 }
@@ -595,7 +595,6 @@ func main() {
 		c.Writer.Write(body)
 
 	})
-
 	router.GET("/ws", func(c *gin.Context) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
@@ -626,7 +625,7 @@ func main() {
 			todayStart := today.Add(time.Hour * -24)
 			db.Where("start_time >= ? AND start_time < ?", todayStart.Unix(), today.Unix()).Find(&incidents)
 			c.JSON(200, Response{
-				Code: 200,
+				Code: 0,
 				Data: incidents,
 				Msg:  "ok",
 			})
@@ -636,7 +635,7 @@ func main() {
 			}
 			db.Where("start_time >= ? AND start_time < ?", startTime, endTime).Find(&incidents)
 			c.JSON(200, Response{
-				Code: 200,
+				Code: 0,
 				Data: incidents,
 				Msg:  "ok",
 			})
@@ -667,7 +666,11 @@ func main() {
 		subscription.Message = incident
 		logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
 		bus.Publish(WEBSOCKET_MESSAGE, subscription)
-		c.JSON(http.StatusOK, subscription)
+		c.JSON(http.StatusOK, Response{
+			Code: 0,
+			Data: subscription,
+			Msg:  "ok",
+		})
 
 	})
 
@@ -681,7 +684,11 @@ func main() {
 		}
 		logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
 		bus.Publish(WEBSOCKET_MESSAGE, subscription)
-		c.JSON(http.StatusOK, subscription)
+		c.JSON(http.StatusOK, Response{
+			Code: 0,
+			Data: subscription,
+			Msg:  "ok",
+		})
 
 	})
 
