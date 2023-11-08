@@ -118,6 +118,16 @@ type NocIncident struct {
 	GroupName       string          `json:"group_name"`
 }
 
+type Alert struct {
+	ID          int             `json:"id"`
+	EventId     string          `json:"event_id"`
+	EventStatus string          `json:"event_status"`
+	Message     string          `json:"message"`
+	RawMessage  json.RawMessage `json:"raw_message"`
+	StartTime   int64           `json:"start_time"`
+	EndTime     int64           `json:"end_time"`
+}
+
 type Config struct {
 	Server struct {
 		Port int `mapstructure:"port" yaml:"port"`
@@ -219,6 +229,7 @@ func InitDB() {
 	var err error
 	db, err = gorm.Open(config.Database.DbType, config.Database.Dsn)
 	db.AutoMigrate(&NocIncident{})
+	db.AutoMigrate(&Alert{})
 	if err != nil {
 		panic(err)
 	}
@@ -640,6 +651,38 @@ func main() {
 				Msg:  "ok",
 			})
 		}
+
+	})
+
+
+	router.POST("/ws/alert", func(c *gin.Context) {
+
+		var incident Alert
+
+		var subscription Subscription
+		err := c.BindJSON(&incident)
+		if err != nil {
+			logger.Println("Failed to parse subscription message:", err)
+			return
+		}
+		var oldIncident Alert
+		if db.First(&oldIncident, "event_id=?", incident.EventId).Error != nil {
+			db.Create(&incident)
+		} else {
+			if oldIncident.ID != 0 {
+				incident.ID = oldIncident.ID
+				db.Save(incident)
+			}
+		}
+		subscription.Topic = "alert"
+		subscription.Message = incident
+		logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
+		bus.Publish(WEBSOCKET_MESSAGE, subscription)
+		c.JSON(http.StatusOK, Response{
+			Code: 0,
+			Data: subscription,
+			Msg:  "ok",
+		})
 
 	})
 
