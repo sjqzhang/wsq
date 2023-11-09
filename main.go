@@ -30,6 +30,7 @@ import (
 )
 
 const WEBSOCKET_MESSAGE = "WEBSOCKET_MESSAGE"
+const WEBSOCKET_EVENT_ClOSE = "WEBSOCKET_EVENT_ClOSE"
 
 var hubLocal *hub
 var logger *log.Logger
@@ -51,7 +52,8 @@ type Response struct {
 type Conn struct {
 	sync.RWMutex
 	*websocket.Conn
-	send chan []byte
+	send    chan []byte
+	isClose bool
 }
 
 type CommonMap struct {
@@ -365,28 +367,31 @@ func (h *hub) SendMessage(subscription Subscription) {
 
 func (h *hub) Run() {
 	for {
-		logger.Println("Goroutines", runtime.NumGoroutine(), "Cardinality", h.conns.Cardinality())
-		time.Sleep(time.Second * 10)
-		pingFunc := func(c *Conn) {
-			c.Lock()
-			defer c.Unlock()
-			defer func() {
-				if err := recover(); err != nil {
-					log.Println(err)
-				}
-			}()
-			err := c.WriteMessage(websocket.PingMessage, []byte{})
-			if isNetError(err) {
-				h.RemoveFailedConn(c)
-			}
-
-		}
-		for _, c := range h.conns.ToSlice() {
-			if v, ok := c.(*Conn); ok {
-				pingFunc(v)
-			}
-
-		}
+		msg := fmt.Sprintf("Goroutines:%v,Cardinality:%v", runtime.NumGoroutine(), h.conns.Cardinality())
+		fmt.Println(msg)
+		logger.Println(msg)
+		time.Sleep(time.Second)
+		//time.Sleep(time.Second * 10)
+		//pingFunc := func(c *Conn) {
+		//	c.Lock()
+		//	defer c.Unlock()
+		//	defer func() {
+		//		if err := recover(); err != nil {
+		//			log.Println(err)
+		//		}
+		//	}()
+		//	err := c.WriteMessage(websocket.PingMessage, []byte{})
+		//	if isNetError(err) {
+		//		h.RemoveFailedConn(c)
+		//	}
+		//
+		//}
+		//for _, c := range h.conns.ToSlice() {
+		//	if v, ok := c.(*Conn); ok {
+		//		pingFunc(v)
+		//	}
+		//
+		//}
 	}
 }
 
@@ -448,7 +453,8 @@ func (h *hub) Unsubscribe(conn *Conn, subscription Subscription) {
 
 // unsubscribe from a topic
 func (h *hub) RemoveFailedConn(conn *Conn) {
-	go func() {
+	conn.isClose = true
+	go func(conn *Conn) {
 		defer func() {
 			if err := recover(); err != nil {
 				log.Println(err)
@@ -465,7 +471,7 @@ func (h *hub) RemoveFailedConn(conn *Conn) {
 				}
 			}
 		}
-	}()
+	}(conn)
 }
 
 func isNetError(err error) bool {
@@ -498,15 +504,16 @@ func readMessages(conn *Conn) {
 	defer func() {
 		if err := recover(); err != nil {
 			hubLocal.RemoveFailedConn(conn)
+			return
 		}
 	}()
 	defer conn.Close()
 	for {
 		// 读取客户端发来的消息
-		conn.SetReadDeadline(time.Now().Add(time.Second * 10))
-		conn.RLock()
+		//conn.SetReadDeadline(time.Now().Add(time.Second * 10))
+		//conn.RLock()
 		messageType, message, err := conn.ReadMessage()
-		conn.RUnlock()
+		//conn.RUnlock()
 		if err != nil {
 			if isNetError(err) {
 				hubLocal.RemoveFailedConn(conn)
@@ -540,6 +547,12 @@ func readMessages(conn *Conn) {
 }
 
 func writeMessages(con *Conn) {
+	defer func() {
+		if err := recover(); err != nil {
+			hubLocal.RemoveFailedConn(con)
+			return
+		}
+	}()
 	tick := time.NewTicker(time.Second * 10)
 	for {
 		select {
@@ -548,7 +561,7 @@ func writeMessages(con *Conn) {
 				return
 			}
 			con.Lock()
-			con.SetWriteDeadline(time.Now().Add(time.Second * 2))
+			//con.SetWriteDeadline(time.Now().Add(time.Second * 2))
 			err := con.WriteMessage(websocket.TextMessage, message)
 			con.Unlock()
 			if isNetError(err) {
@@ -562,8 +575,13 @@ func writeMessages(con *Conn) {
 			if isNetError(err) {
 				hubLocal.RemoveFailedConn(con)
 			}
-
+		default:
+			if con.isClose {
+				return
+			}
+			//time.Sleep(time.Second)
 		}
+
 	}
 
 }
@@ -654,6 +672,53 @@ func main() {
 
 	})
 
+	router.GET("/ws/alert", func(c *gin.Context) {
+		var incidents []Alert
+		// 取当天的数据
+		// 取过去24小时的数据
+
+		startTime := c.Query("start_time")
+
+		endTime := c.Query("end_time")
+
+		groupId := c.Query("group_id")
+
+		groupWhere := ""
+		if groupId != "" {
+			groupWhere = "and (json_extract(raw_message, '$.group_ids') like '[" + groupId + ",%' or json_extract(raw_message, '$.group_ids') like '%," + groupId + ",%'  or json_extract(raw_message, '$.group_ids') like '%," + groupId + "]' or json_extract(raw_message, '$.group_ids') like '[" + groupId + "]')"
+		}
+
+		if startTime == "" {
+
+			today := time.Now().UTC()
+			todayStart := today.Add(time.Hour * -24)
+			if groupWhere != "" {
+				db.Debug().Where("start_time >= ? AND start_time <= ? and event_status='firing' "+groupWhere, todayStart.Unix(), today.Unix()).Find(&incidents)
+			} else {
+				db.Where("start_time >= ? AND start_time <= ? and event_status='firing'", todayStart.Unix(), today.Unix()).Find(&incidents)
+			}
+			c.JSON(200, Response{
+				Code: 0,
+				Data: incidents,
+				Msg:  "ok",
+			})
+		} else {
+			if endTime == "" {
+				endTime = startTime
+			}
+			if groupWhere != "" {
+				db.Where("start_time >= ? AND start_time <= ? and event_status='firing' "+groupWhere, startTime, endTime).Find(&incidents)
+			} else {
+				db.Where("start_time >= ? AND start_time <= ? and event_status='firing'", startTime, endTime).Find(&incidents)
+			}
+			c.JSON(200, Response{
+				Code: 0,
+				Data: incidents,
+				Msg:  "ok",
+			})
+		}
+
+	})
 
 	router.POST("/ws/alert", func(c *gin.Context) {
 
@@ -676,8 +741,19 @@ func main() {
 		}
 		subscription.Topic = "alert"
 		subscription.Message = incident
-		logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
-		bus.Publish(WEBSOCKET_MESSAGE, subscription)
+		type Raw struct {
+			GroupIds    []int64 `json:"group_ids"`
+			EventStatus string  `json:"event_status"`
+		}
+		var raw Raw
+		json.Unmarshal([]byte(incident.RawMessage), &raw)
+		if raw.EventStatus == "firing" {
+			logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
+			for _, groupId := range raw.GroupIds {
+				subscription.ID = fmt.Sprintf("%v", groupId)
+				bus.Publish(WEBSOCKET_MESSAGE, subscription)
+			}
+		}
 		c.JSON(http.StatusOK, Response{
 			Code: 0,
 			Data: subscription,
