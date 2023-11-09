@@ -132,7 +132,8 @@ type Alert struct {
 
 type Config struct {
 	Server struct {
-		Port int `mapstructure:"port" yaml:"port"`
+		Port  int  `mapstructure:"port" yaml:"port"`
+		Debug bool `mapstructure:"debug" yaml:"debug"`
 	} `yaml:"server"`
 	EmbedRedis struct {
 		Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -166,9 +167,11 @@ func InitConfig() {
 			// 如果配置文件不存在，则生成模板
 			config = Config{
 				Server: struct {
-					Port int `mapstructure:"port" yaml:"port"`
+					Port  int  `mapstructure:"port" yaml:"port"`
+					Debug bool `mapstructure:"debug" yaml:"debug"`
 				}{
-					Port: 8866,
+					Port:  8866,
+					Debug: true,
 				},
 				EmbedRedis: struct {
 					Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -340,9 +343,6 @@ func (h *hub) SendMessage(subscription Subscription) {
 	if subscription.Action == "response" {
 		defer h.reqs.Delete(subscription.ID)
 		if v, ok := h.reqs.Load(subscription.ID); ok {
-			//v.(*Conn).Lock()
-			//defer v.(*Conn).Unlock()
-
 			data, err := json.Marshal(subscription)
 			if err != nil {
 				return
@@ -366,32 +366,16 @@ func (h *hub) SendMessage(subscription Subscription) {
 }
 
 func (h *hub) Run() {
+	var memStats runtime.MemStats
 	for {
-		msg := fmt.Sprintf("Goroutines:%v,Cardinality:%v", runtime.NumGoroutine(), h.conns.Cardinality())
+		runtime.ReadMemStats(&memStats)
+		msg := fmt.Sprintf("Goroutines:%v,Cardinality:%v,Memory:%v", runtime.NumGoroutine(), h.conns.Cardinality(), memStats.Alloc/1024)
 		fmt.Println(msg)
-		logger.Println(msg)
+		if config.Server.Debug {
+			logger.Println(msg)
+		}
 		time.Sleep(time.Second)
-		//time.Sleep(time.Second * 10)
-		//pingFunc := func(c *Conn) {
-		//	c.Lock()
-		//	defer c.Unlock()
-		//	defer func() {
-		//		if err := recover(); err != nil {
-		//			log.Println(err)
-		//		}
-		//	}()
-		//	err := c.WriteMessage(websocket.PingMessage, []byte{})
-		//	if isNetError(err) {
-		//		h.RemoveFailedConn(c)
-		//	}
-		//
-		//}
-		//for _, c := range h.conns.ToSlice() {
-		//	if v, ok := c.(*Conn); ok {
-		//		pingFunc(v)
-		//	}
-		//
-		//}
+
 	}
 }
 
@@ -460,6 +444,7 @@ func (h *hub) RemoveFailedConn(conn *Conn) {
 				log.Println(err)
 			}
 		}()
+		h.conns.Remove(conn)
 		for k, v := range h.subs.LoadAll() {
 			for _, con := range v.(mapset.Set).ToSlice() {
 				c := con.(*Conn)
@@ -569,19 +554,17 @@ func writeMessages(con *Conn) {
 			}
 		case <-tick.C:
 			//ping current connection
+			if con.isClose {
+				return
+			}
 			con.Lock()
 			err := con.WriteMessage(websocket.PingMessage, []byte{})
 			con.Unlock()
 			if isNetError(err) {
 				hubLocal.RemoveFailedConn(con)
 			}
-		default:
-			if con.isClose {
-				return
-			}
-			//time.Sleep(time.Second)
-		}
 
+		}
 	}
 
 }
@@ -811,6 +794,6 @@ func main() {
 
 	})
 
-	router.Run(fmt.Sprintf(":%v", config.Server.Port))
+	router.Run(fmt.Sprintf("127.0.0.1:%v", config.Server.Port))
 
 }
