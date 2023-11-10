@@ -49,10 +49,15 @@ type Response struct {
 	Msg  string      `json:"message"`
 }
 
+type WSMessage struct {
+	MessageType int    `json:"message_type"`
+	Data        []byte `json:"data"`
+}
+
 type Conn struct {
 	sync.RWMutex
 	*websocket.Conn
-	send    chan []byte
+	send    chan WSMessage
 	isClose bool
 }
 
@@ -347,19 +352,26 @@ func (h *hub) SendMessage(subscription Subscription) {
 			if err != nil {
 				return
 			}
-			v.(*Conn).send <- data
+			v.(*Conn).send <- WSMessage{
+				MessageType: websocket.TextMessage,
+				Data:        data,
+			}
 		}
 		return
 	}
 	key := fmt.Sprintf("%s_$_%s", subscription.Topic, subscription.ID)
 	data, err := json.Marshal(subscription)
 	if err != nil {
-		logger.Println(err,subscription)
+		logger.Println(err, subscription)
 		return
 	}
+	msg := WSMessage{
+		MessageType: websocket.TextMessage,
+		Data:        data,
+	}
 	if m, ok := h.subs.Load(key); ok {
-		for  conn :=range m.(mapset.Set).Iter() {
-			conn.(*Conn).send <- data
+		for conn := range m.(mapset.Set).Iter() {
+			conn.(*Conn).send <- msg
 		}
 	}
 
@@ -512,8 +524,11 @@ func readMessages(conn *Conn) {
 
 		case websocket.CloseMessage:
 			return
-		case websocket.PingMessage:// TODO: maybe panic
-			conn.WriteMessage(websocket.PongMessage, nil)
+		case websocket.PingMessage:
+			conn.send <- WSMessage{
+				MessageType: websocket.PongMessage,
+				Data:        []byte("pong"),
+			}
 		case websocket.TextMessage:
 			// 解析订阅消息
 			var subscription Subscription
@@ -545,9 +560,13 @@ func writeMessages(con *Conn) {
 			if !ok {
 				return
 			}
+			if con.isClose {
+				return
+			}
+
 			con.Lock()
 			//con.SetWriteDeadline(time.Now().Add(time.Second * 2))
-			err := con.WriteMessage(websocket.TextMessage, message)
+			err := con.WriteMessage(message.MessageType, message.Data)
 			con.Unlock()
 			if isNetError(err) {
 				hubLocal.RemoveFailedConn(con)
@@ -616,7 +635,7 @@ func main() {
 		con := &Conn{
 			Conn:    conn,
 			RWMutex: sync.RWMutex{},
-			send:    make(chan []byte, 1000),
+			send:    make(chan WSMessage, 1000),
 		}
 		go readMessages(con)
 		go writeMessages(con)
@@ -784,7 +803,7 @@ func main() {
 			logger.Println("Failed to parse subscription message:", err)
 			return
 		}
-		logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
+		logger.Println(fmt.Sprintf("发布消息：%v", subscription))
 		bus.Publish(WEBSOCKET_MESSAGE, subscription)
 		c.JSON(http.StatusOK, Response{
 			Code: 0,
