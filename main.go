@@ -351,14 +351,14 @@ func (h *hub) SendMessage(subscription Subscription) {
 		}
 		return
 	}
-
 	key := fmt.Sprintf("%s_$_%s", subscription.Topic, subscription.ID)
+	data, err := json.Marshal(subscription)
+	if err != nil {
+		logger.Println(err,subscription)
+		return
+	}
 	if m, ok := h.subs.Load(key); ok {
-		for _, conn := range m.(mapset.Set).ToSlice() {
-			data, err := json.Marshal(subscription)
-			if err != nil {
-				return
-			}
+		for  conn :=range m.(mapset.Set).Iter() {
 			conn.(*Conn).send <- data
 		}
 	}
@@ -512,7 +512,7 @@ func readMessages(conn *Conn) {
 
 		case websocket.CloseMessage:
 			return
-		case websocket.PingMessage:
+		case websocket.PingMessage:// TODO: maybe panic
 			conn.WriteMessage(websocket.PongMessage, nil)
 		case websocket.TextMessage:
 			// 解析订阅消息
@@ -794,6 +794,6 @@ func main() {
 
 	})
 
-	router.Run(fmt.Sprintf("127.0.0.1:%v", config.Server.Port))
+	router.Run(fmt.Sprintf(":%v", config.Server.Port))
 
 }
