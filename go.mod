@@ -3,10 +3,10 @@ module github.com/sjqzhang/wsq
 go 1.18
 
 require (
+	github.com/RussellLuo/timingwheel v0.0.0-20220218152713-54845bda3108
 	github.com/alicebob/miniredis/v2 v2.31.0
 	github.com/deckarep/golang-set v1.8.0
 	github.com/gin-gonic/gin v1.9.1
-	github.com/google/uuid v1.1.2
 	github.com/gorilla/websocket v1.5.0
 	github.com/jinzhu/gorm v1.9.16
 	github.com/mattn/go-sqlite3 v1.14.17

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/RussellLuo/timingwheel"
 	"github.com/alicebob/miniredis/v2"
 	mapset "github.com/deckarep/golang-set"
 	"github.com/gin-gonic/gin"
@@ -49,6 +50,17 @@ type Response struct {
 	Msg  string      `json:"message"`
 }
 
+func response(code int, data interface{}, msg string) []byte {
+	resp := Response{
+		Code: code,
+		Data: data,
+		Msg:  msg,
+	}
+	res, _ := json.Marshal(resp)
+
+	return res
+}
+
 type WSMessage struct {
 	MessageType int    `json:"message_type"`
 	Data        []byte `json:"data"`
@@ -57,8 +69,9 @@ type WSMessage struct {
 type Conn struct {
 	sync.RWMutex
 	*websocket.Conn
-	send    chan WSMessage
-	isClose bool
+	send       chan WSMessage
+	isClose    bool
+	createTime int64
 }
 
 type CommonMap struct {
@@ -262,12 +275,20 @@ func InitRedis() {
 		panic(err)
 	}
 
+	go func() {
+		for {
+			rs.FastForward(time.Second * 1)
+		}
+	}()
+
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     config.Redis.Addr,
 		Password: config.Redis.Password,
 		DB:       config.Redis.DB,
 	})
 }
+
+var ts *timingwheel.TimingWheel
 
 func init() {
 
@@ -279,6 +300,8 @@ func init() {
 			go hubLocal.SendMessage(v)
 		}
 	})
+	ts = timingwheel.NewTimingWheel(time.Second, 3)
+	ts.Start()
 }
 
 var upgrader = websocket.Upgrader{
@@ -346,8 +369,9 @@ func (h *hub) SendMessage(subscription Subscription) {
 		}
 	}()
 	if subscription.Action == "response" {
-		defer h.reqs.Delete(subscription.ID)
-		if v, ok := h.reqs.Load(subscription.ID); ok {
+		reqKey := fmt.Sprintf("req_%v", subscription.ID)
+		defer h.reqs.Delete(reqKey)
+		if v, ok := h.reqs.Load(reqKey); ok {
 			data, err := json.Marshal(subscription)
 			if err != nil {
 				return
@@ -387,15 +411,26 @@ func (h *hub) Run() {
 			logger.Println(msg)
 		}
 		time.Sleep(time.Second)
-
 	}
 }
 
 func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
 	if subscription.Action == "request" {
 		ctx := context.Background()
+		reqKey := fmt.Sprintf("req_%v", subscription.ID)
 		if subscription.ID == "" {
 			logger.Print(fmt.Sprintf("request id is null,Subscribe: %v", subscription))
+			conn.send <- WSMessage{
+				MessageType: websocket.TextMessage,
+				Data:        response(-1, subscription, "request id is null"),
+			}
+			return
+		}
+		if _, ok := h.reqs.Load(reqKey); ok {
+			conn.send <- WSMessage{
+				MessageType: websocket.TextMessage,
+				Data:        response(-1, subscription, "request already exists"),
+			}
 			return
 		}
 		rdb.Pipelined(ctx, func(pipeliner redis.Pipeliner) error {
@@ -412,13 +447,18 @@ func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
 				logger.Println(err)
 				return err
 			}
+
 			topic := fmt.Sprintf("Topic_%s", subscription.Topic)
 			pipeliner.SAdd(ctx, "Topics", topic)
 			pipeliner.LPush(ctx, subscription.Topic, data)
 			pipeliner.Publish(ctx, topic, "")
+			pipeliner.Expire(ctx, topic, 10*time.Minute)
 			pipeliner.LTrim(ctx, subscription.Topic, 0, 1000)
 			if _, err := pipeliner.Exec(ctx); err == nil {
-				h.reqs.Store(subscription.ID, conn)
+				h.reqs.Store(reqKey, conn)
+				ts.AfterFunc(time.Second*60, func() {
+					h.reqs.Delete(reqKey)
+				})
 			}
 			return nil
 		})
@@ -637,9 +677,10 @@ func main() {
 			return
 		}
 		con := &Conn{
-			Conn:    conn,
-			RWMutex: sync.RWMutex{},
-			send:    make(chan WSMessage, 1000),
+			Conn:       conn,
+			RWMutex:    sync.RWMutex{},
+			send:       make(chan WSMessage, 1000),
+			createTime: time.Now().Unix(),
 		}
 		go readMessages(con)
 		go writeMessages(con)
