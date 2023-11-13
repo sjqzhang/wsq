@@ -394,6 +394,10 @@ func (h *hub) Run() {
 func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
 	if subscription.Action == "request" {
 		ctx := context.Background()
+		if subscription.ID == "" {
+			logger.Print(fmt.Sprintf("request id is null,Subscribe: %v", subscription))
+			return
+		}
 		rdb.Pipelined(ctx, func(pipeliner redis.Pipeliner) error {
 			msg := Message{
 				Topic:       subscription.Topic,

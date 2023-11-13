@@ -11,6 +11,7 @@
 ```
 
 
+
 ### publish
 - /ws/api 
 ```json
@@ -29,3 +30,16 @@
 }
 
 ```
+
+
+### request/response
+- /ws
+```json
+{"action":"request","topic":"proxy","id":"uuid","message": {
+  "url": "https://www.baidu.com",
+  "method": "get",
+  "headers": {},
+  "body": {}
+}}
+```
+
