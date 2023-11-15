@@ -279,6 +279,7 @@ func InitRedis() {
 	go func() {
 		for {
 			rs.FastForward(time.Second * 1)
+			time.Sleep(time.Second * 1)
 		}
 	}()
 
