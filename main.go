@@ -9,6 +9,7 @@ import (
 	"github.com/RussellLuo/timingwheel"
 	"github.com/alicebob/miniredis/v2"
 	mapset "github.com/deckarep/golang-set"
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/jinzhu/gorm"
@@ -459,7 +460,7 @@ func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
 				ts.AfterFunc(time.Second*60, func() {
 					conn.send <- WSMessage{
 						MessageType: websocket.TextMessage,
-						Data: response(-1,subscription,"request timeout"),
+						Data:        response(-1, subscription, "request timeout"),
 					}
 					h.reqs.Delete(reqKey)
 				})
@@ -662,6 +663,10 @@ func main() {
 	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 		Output: logFile,
 	}))
+	if config.Server.Debug {
+		pprof.Register(router)
+	}
+
 	gin.DefaultErrorWriter = logFile
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
