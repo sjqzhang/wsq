@@ -588,8 +588,12 @@ func readMessages(conn *Conn) {
 				continue
 			}
 			handleMessages(conn, subscription)
-
-			logger.Println(fmt.Sprintf("订阅消息:%v", subscription))
+			data,err:=json.Marshal(subscription)
+			if err!=nil {
+				logger.Println(err)
+			} else {
+				logger.Println(fmt.Sprintf("订阅消息:%v", string(data)))
+			}
 
 		}
 
@@ -805,7 +809,11 @@ func main() {
 		var raw Raw
 		json.Unmarshal([]byte(incident.RawMessage), &raw)
 		if raw.EventStatus == "firing" {
-			logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
+			if data,err:=json.Marshal(subscription);err==nil {
+				logger.Println(fmt.Sprintf("发布消息：%v", string(data)))
+			} else {
+				logger.Println(err)
+			}
 			for _, groupId := range raw.GroupIds {
 				subscription.ID = fmt.Sprintf("%v", groupId)
 				bus.Publish(WEBSOCKET_MESSAGE, subscription)
@@ -840,7 +848,11 @@ func main() {
 		}
 		subscription.Topic = "noc_incident"
 		subscription.Message = incident
-		logger.Println(fmt.Sprintf("订阅消息：%v", subscription))
+		if data,err:=json.Marshal(subscription);err==nil {
+			logger.Println(fmt.Sprintf("发布消息：%v", string(data)))
+		} else {
+			logger.Println(err)
+		}
 		bus.Publish(WEBSOCKET_MESSAGE, subscription)
 		c.JSON(http.StatusOK, Response{
 			Code: 0,
