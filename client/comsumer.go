@@ -1,12 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/redis/go-redis/v9"
+	"github.com/sjqzhang/requests"
 	"log"
-	"net/http"
+	"strings"
 	"time"
 )
 
@@ -30,34 +30,69 @@ func init() {
 		Addr: "127.0.0.1:6380",
 		DB:   0,
 	})
-	sub = redisClient.Subscribe(nil)
-	q = make(chan string)
+	sub = redisClient.Subscribe(context.Background(), "Topic_*")
+	q = make(chan string, 100)
 }
 
 func handlerTest(msg Message) interface{} {
 	return msg
 }
 
-func init()  {
+func handlerProxy(msg Message) interface{} {
+
+	type Req struct {
+		Method string          `json:"method"`
+		Url    string          `json:"url"`
+		Body   string          `json:"body"`
+		Header requests.Header `json:"headers"`
+	}
+
+	var req Req
+
+	var data []byte
+
+	switch msg.Message.(type) {
+	case string:
+		data = []byte(msg.Message.(string))
+	case []byte:
+		data = msg.Message.([]byte)
+	default:
+		data, _ = json.Marshal(msg.Message)
+	}
+
+	err := json.Unmarshal(data, &req)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	resp, err := requests.Requests().Do(strings.ToUpper(req.Method), req.Url, req.Header, req.Body)
+	if err != nil {
+		return err.Error()
+	}
+	return resp.Text()
+
+}
+
+func init() {
 
 	topicMap["test"] = handlerTest
 	topicMap["test1"] = handlerTest
 	topicMap["test2"] = handlerTest
+	topicMap["proxy"] = handlerProxy
 }
-
-
-
 
 func freshSubscribe() {
 	for {
-
 		topics, err := redisClient.SMembers(context.Background(), "Topics").Result()
 		if err != nil {
 			log.Println(err)
 			continue
 		}
 		if len(topics) > 0 {
-			sub.Subscribe(context.Background(), topics...)
+			err := sub.Subscribe(context.Background(), topics...)
+			if err != nil {
+				log.Println(err)
+			}
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -83,12 +118,11 @@ func wrapResult(msg Message, result interface{}) {
 		log.Println(err)
 		return
 	}
-	resp, err := http.Post(msg.CallbackURL, "application/json", bytes.NewBuffer(data))
+	_, err = requests.PostJson(msg.CallbackURL, string(data))
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	defer resp.Body.Close()
 }
 
 func consumer() {
