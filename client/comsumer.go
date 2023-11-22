@@ -128,27 +128,25 @@ func wrapResult(msg Message, result interface{}) {
 func consumer() {
 	for {
 		topic := <-q
-		message, err := redisClient.RPop(context.Background(), topic).Bytes()
-		if err != nil {
-			log.Println(err)
-			continue
+		for {
+			message, err := redisClient.RPop(context.Background(), topic).Bytes()
+			if err != nil || len(message) == 0 {
+				log.Println(err)
+				break
+			}
+			if handler, ok := topicMap[topic]; ok {
+				var msg Message
+				json.Unmarshal(message, &msg)
+				result := handler(msg)
+				wrapResult(msg, result)
+			}
 		}
-		if len(message) == 0 {
-			continue
-		}
-		handler := topicMap[topic]
-		if handler == nil {
-			continue
-		}
-		var msg Message
-		json.Unmarshal(message, &msg)
-		result := handler(msg)
-		wrapResult(msg, result)
 	}
 }
 
 func main() {
 	go freshSubscribe()
+	time.Sleep(1 * time.Second)
 	go redisSubscribe()
 
 	threadPool := make(chan struct{}, 40)
