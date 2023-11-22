@@ -459,11 +459,13 @@ func (h *hub) Subscribe(conn *Conn, subscription Subscription) {
 			if _, err := pipeliner.Exec(ctx); err == nil {
 				h.reqs.Store(reqKey, conn)
 				ts.AfterFunc(time.Second*60, func() {
-					conn.send <- WSMessage{
-						MessageType: websocket.TextMessage,
-						Data:        response(-1, subscription, "request timeout"),
+					if _, ok := h.reqs.Load(reqKey); ok {
+						conn.send <- WSMessage{
+							MessageType: websocket.TextMessage,
+							Data:        response(-1, subscription, "request timeout"),
+						}
+						h.reqs.Delete(reqKey)
 					}
-					h.reqs.Delete(reqKey)
 				})
 			}
 			return nil
