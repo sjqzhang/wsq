@@ -23,8 +23,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"runtime"
 
@@ -153,9 +151,8 @@ type Alert struct {
 
 type Config struct {
 	Server struct {
-		Port   int    `mapstructure:"port" yaml:"port"`
-		Prefix string `mapstructure:"prefix" yaml:"prefix"`
-		Debug  bool   `mapstructure:"debug" yaml:"debug"`
+		Port  int  `mapstructure:"port" yaml:"port"`
+		Debug bool `mapstructure:"debug" yaml:"debug"`
 	} `yaml:"server"`
 	EmbedRedis struct {
 		Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -171,12 +168,6 @@ type Config struct {
 		Password string `mapstructure:"password" yaml:"password"`
 		DB       int    `mapstructure:"db" yaml:"db"`
 	} `yaml:"redis"`
-
-	ForwardConfig []struct {
-		Prefix  string `yaml:"prefix" mapstructure:"prefix"`
-		Forward string `yaml:"forward" mapstructure:"forward"`
-		Default bool   `yaml:"default" mapstructure:"default"`
-	} `yaml:"forwardConfig"`
 }
 
 func InitConfig() {
@@ -195,13 +186,11 @@ func InitConfig() {
 			// 如果配置文件不存在，则生成模板
 			config = Config{
 				Server: struct {
-					Port   int    `mapstructure:"port" yaml:"port"`
-					Prefix string `mapstructure:"prefix" yaml:"prefix"`
-					Debug  bool   `mapstructure:"debug" yaml:"debug"`
+					Port  int  `mapstructure:"port" yaml:"port"`
+					Debug bool `mapstructure:"debug" yaml:"debug"`
 				}{
-					Port:   8866,
-					Prefix: "/ws",
-					Debug:  true,
+					Port:  8866,
+					Debug: true,
 				},
 				EmbedRedis: struct {
 					Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -227,17 +216,6 @@ func InitConfig() {
 					Addr:     "127.0.0.1:6380",
 					Password: "",
 					DB:       0,
-				},
-				ForwardConfig: []struct {
-					Prefix  string `yaml:"prefix" mapstructure:"prefix"`
-					Forward string `yaml:"forward" mapstructure:"forward"`
-					Default bool   `yaml:"default" mapstructure:"default"`
-				}{
-					{
-						Prefix:  "/v2/",
-						Forward: "http://127.0.0.1:5000",
-						Default: true,
-					},
 				},
 			}
 
@@ -286,7 +264,7 @@ func InitRedis() {
 
 	rs = miniredis.NewMiniRedis()
 
-	rs.StartAddr(config.EmbedRedis.Addr)
+
 
 	if config.EmbedRedis.Password != "" {
 		rs.RequireAuth(config.EmbedRedis.Password)
@@ -294,7 +272,7 @@ func InitRedis() {
 
 	rs.DB(config.EmbedRedis.DB)
 
-	if err := rs.Start(); err != nil {
+	if err:=rs.StartAddr(config.EmbedRedis.Addr);err!=nil{
 		panic(err)
 	}
 
@@ -612,8 +590,8 @@ func readMessages(conn *Conn) {
 				continue
 			}
 			handleMessages(conn, subscription)
-			data, err := json.Marshal(subscription)
-			if err != nil {
+			data,err:=json.Marshal(subscription)
+			if err!=nil {
 				logger.Println(err)
 			} else {
 				logger.Println(fmt.Sprintf("订阅消息:%v", string(data)))
@@ -689,8 +667,7 @@ func main() {
 	logger = log.New(logFile, "[WS] ", log.LstdFlags)
 	go hubLocal.Run()
 	router := gin.Default()
-	routerGroup := router.Group(config.Server.Prefix)
-	routerGroup.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 		Output: logFile,
 	}))
 	if config.Server.Debug {
@@ -700,7 +677,6 @@ func main() {
 	gin.DefaultErrorWriter = logFile
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
-
 	router.GET("/", func(c *gin.Context) {
 		body, err := ioutil.ReadFile("home.html")
 		if err != nil {
@@ -710,7 +686,7 @@ func main() {
 		c.Writer.Write(body)
 
 	})
-	routerGroup.GET("/", func(c *gin.Context) {
+	router.GET("/ws", func(c *gin.Context) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			logger.Println("Failed to upgrade connection:", err)
@@ -726,7 +702,7 @@ func main() {
 		go writeMessages(con)
 	})
 
-	routerGroup.GET("/noc_incident", func(c *gin.Context) {
+	router.GET("/ws/noc_incident", func(c *gin.Context) {
 		var incidents []NocIncident
 		// 取当天的数据
 		// 取过去24小时的数据
@@ -759,7 +735,7 @@ func main() {
 
 	})
 
-	routerGroup.GET("/alert", func(c *gin.Context) {
+	router.GET("/ws/alert", func(c *gin.Context) {
 		var incidents []Alert
 		// 取当天的数据
 		// 取过去24小时的数据
@@ -807,7 +783,7 @@ func main() {
 
 	})
 
-	routerGroup.POST("/alert", func(c *gin.Context) {
+	router.POST("/ws/alert", func(c *gin.Context) {
 
 		var incident Alert
 
@@ -835,7 +811,7 @@ func main() {
 		var raw Raw
 		json.Unmarshal([]byte(incident.RawMessage), &raw)
 		if raw.EventStatus == "firing" {
-			if data, err := json.Marshal(subscription); err == nil {
+			if data,err:=json.Marshal(subscription);err==nil {
 				logger.Println(fmt.Sprintf("发布消息：%v", string(data)))
 			} else {
 				logger.Println(err)
@@ -853,7 +829,7 @@ func main() {
 
 	})
 
-	routerGroup.POST("/noc_incident", func(c *gin.Context) {
+	router.POST("/ws/noc_incident", func(c *gin.Context) {
 
 		var incident NocIncident
 
@@ -874,7 +850,7 @@ func main() {
 		}
 		subscription.Topic = "noc_incident"
 		subscription.Message = incident
-		if data, err := json.Marshal(subscription); err == nil {
+		if data,err:=json.Marshal(subscription);err==nil {
 			logger.Println(fmt.Sprintf("发布消息：%v", string(data)))
 		} else {
 			logger.Println(err)
@@ -888,7 +864,7 @@ func main() {
 
 	})
 
-	routerGroup.POST("/api", func(c *gin.Context) {
+	router.POST("/ws/api", func(c *gin.Context) {
 
 		var subscription Subscription
 		err := c.BindJSON(&subscription)
@@ -905,56 +881,6 @@ func main() {
 		})
 
 	})
-
-	router.NoRoute(func(c *gin.Context) {
-		for _, forwardCfg := range config.ForwardConfig {
-			if forwardCfg.Default {
-				// 创建代理服务器的目标URL
-				targetURL, _ := url.Parse(forwardCfg.Forward)
-				// 创建反向代理
-				proxy := httputil.NewSingleHostReverseProxy(targetURL)
-				// 更改请求的主机头
-				c.Request.Host = targetURL.Host
-
-				// 将请求转发到代理服务器
-				proxy.ServeHTTP(c.Writer, c.Request)
-				return
-			}
-		}
-		c.JSON(http.StatusNotFound, gin.H{
-			"code": 404,
-			"msg":  "not found",
-		})
-
-	})
-
-	for _, forwardCfg := range config.ForwardConfig {
-		prefix := forwardCfg.Prefix
-		if !strings.HasPrefix(prefix, "/") {
-			prefix = "/" + prefix
-		}
-		targetURL := forwardCfg.Forward
-
-		// 注册转发路由
-		routerGroup.Any(prefix+"/*path", func(c *gin.Context) {
-			// 创建反向代理
-
-			uri, err := url.Parse(targetURL)
-			if err != nil {
-				logger.Println(err)
-				c.Writer.Write([]byte(err.Error()))
-				return
-			}
-			proxy := httputil.NewSingleHostReverseProxy(uri)
-
-			// 更改请求的主机头
-			c.Request.Host = uri.Host
-			c.Request.URL.Path = prefix + c.Param("path")
-
-			// 将请求转发到目标URL
-			proxy.ServeHTTP(c.Writer, c.Request)
-		})
-	}
 
 	router.Run(fmt.Sprintf(":%v", config.Server.Port))
 
