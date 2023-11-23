@@ -701,7 +701,7 @@ func main() {
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
 
-	router.GET("/", func(c *gin.Context) {
+	router.GET("", func(c *gin.Context) {
 		body, err := ioutil.ReadFile("home.html")
 		if err != nil {
 			logger.Println(err)
