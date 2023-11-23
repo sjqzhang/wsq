@@ -701,7 +701,7 @@ func main() {
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
 
-	router.GET("", func(c *gin.Context) {
+	router.GET("/", func(c *gin.Context) {
 		body, err := ioutil.ReadFile("home.html")
 		if err != nil {
 			logger.Println(err)
@@ -710,7 +710,7 @@ func main() {
 		c.Writer.Write(body)
 
 	})
-	routerGroup.GET("/", func(c *gin.Context) {
+	routerGroup.GET("", func(c *gin.Context) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			logger.Println("Failed to upgrade connection:", err)
