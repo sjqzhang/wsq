@@ -5,10 +5,12 @@ from flask_jwt import JWT, jwt_required, current_identity
 from werkzeug.security import safe_str_cmp
 from functools import wraps
 from datetime import datetime, timedelta
-
+from flask import Blueprint
+blueprint = Blueprint('ws',__name__,url_prefix='/ws',)
 app = Flask(__name__,instance_path='/tmp')
+
 app.config['SECRET_KEY'] = 'supersecretkey'
-app.config['JWT_EXPIRATION_DELTA']=timedelta(seconds=300000)
+app.config['JWT_EXPIRATION_DELTA']=timedelta(days=365*10)
 
 # 加载Casbin的model和policy
 enforcer = Enforcer("model.conf", "policy.csv")
@@ -46,7 +48,7 @@ def authorize():
         def wrapper(*args, **kwargs):
             # 获取当前用户的角色或用户名，根据实际情况进行修改
 
-            user_role = current_identity
+            username = current_identity
             # 检查当前用户是否具有所需权限
             if enforcer.enforce(username, request.path, request.method):
                 # 执行原始函数
@@ -61,22 +63,27 @@ def authorize():
 
 # 定义受保护的路由
 @app.route('/protected')
-@jwt_required()
+@authorize()
 def protected():
-    username = current_identity
-
-    # 检查当前用户是否有访问权限
-    if enforcer.enforce(username, request.path, request.method):
-        return {'message': '授权成功'}
-    else:
-        return {'error': '没有访问权限'}, 403
-
-
+    return "This is a protected route"
 
 @app.route('/api/user')
 @authorize()
-def user():
-    return 'hello,world'
+def api_user():
+    return "This is an API route"
+
+#blueprint example
+
+@blueprint.route('/')
+def index():
+    return 'index'
+
+
+@blueprint.route('/protected')
+@authorize()
+def blueprint_protected():
+    return 'protected'
 
 if __name__ == '__main__':
+    app.register_blueprint(blueprint)
     app.run(debug=True, port=5001)

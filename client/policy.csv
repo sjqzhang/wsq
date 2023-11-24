@@ -1,3 +1,5 @@
-p, admin, /protected, GET
-p, admin, /api/user,GET
-g, hello, admin
+p, read_role, /protected, GET
+p, write_role, /api/user,GET
+g, admin_role, read_role
+g, admin_role,write_role
+g, hello,admin_role
