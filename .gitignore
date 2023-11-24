@@ -1,4 +1,5 @@
 gin.log
+access.log
 config.yaml
 *.db
 .idea/

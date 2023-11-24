@@ -670,6 +670,64 @@ func handleMessages(conn *Conn, subscription Subscription) {
 	hubLocal.Subscribe(conn, subscription)
 } // 获取订阅
 
+
+func Logger() gin.HandlerFunc {
+	// 创建日志输出器
+	logOutput := &lumberjack.Logger{
+		Filename:   "access.log",
+		MaxSize:    100, // 单位：MB
+		MaxBackups: 3,
+		MaxAge:     30,    // 单位：天
+		Compress:   false, // 是否压缩日志文件
+	}
+
+	//// 设置日志输出到文件
+	//log.SetOutput(logOutput)
+
+	return func(c *gin.Context) {
+		// 开始时间
+		start := time.Now()
+
+		// 处理请求
+		c.Next()
+
+		// 结束时间
+		end := time.Now()
+
+		// 请求IP地址
+		clientIP := c.ClientIP()
+
+		// 请求方法
+		method := c.Request.Method
+
+		// 请求路径
+		path := c.Request.URL.Path
+
+		// 响应状态码
+		statusCode := c.Writer.Status()
+
+		// 响应大小
+		size := c.Writer.Size()
+
+		// 请求耗时
+		latency := end.Sub(start)
+
+		// 构建日志条目
+		logEntry := fmt.Sprintf("%s - - [%s] \"%s %s\" %d %d %s\n",
+			clientIP,
+			end.Format("2006-01-02:15:04:05 -0700"),
+			method,
+			path,
+			statusCode,
+			size,
+			latency.String(),
+		)
+
+		// 输出日志
+		logOutput.Write([]byte(logEntry))
+	}
+}
+
 var addr = flag.String("addr", ":8866", "http service address")
 
 func main() {
@@ -689,6 +747,7 @@ func main() {
 	logger = log.New(logFile, "[WS] ", log.LstdFlags)
 	go hubLocal.Run()
 	router := gin.Default()
+	router.Use(Logger())
 	routerGroup := router.Group(config.Server.Prefix)
 	routerGroup.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 		Output: logFile,
