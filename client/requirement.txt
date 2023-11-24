@@ -2,4 +2,9 @@ casbin==1.33.0
 Flask==1.1.4
 flask-casbin==0.3.1
 Flask-JWT==0.3.2
+PyMySQL==1.0.2
+dsnparse==0.1.15
+ops-channel==0.5.8
+
+
 
