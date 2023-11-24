@@ -1,11 +1,12 @@
 #! -*- encoding: utf-8 -*-
-from flask import Flask, request,g
+from flask import Flask, request,g,jsonify
 from casbin import Enforcer
 from flask_jwt import JWT, jwt_required, current_identity
 from werkzeug.security import safe_str_cmp
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import Blueprint
+
 blueprint = Blueprint('ws',__name__,url_prefix='/ws',)
 app = Flask(__name__,instance_path='/tmp')
 
@@ -38,7 +39,18 @@ def identity(payload):
 
 jwt = JWT(app, authenticate, identity)
 
-
+# 统一的返回处理装饰器
+def response_handler(f):
+    def wrapper(*args, **kwargs):
+        try:
+            # 执行路由处理函数
+            response = f(*args, **kwargs)
+            # 返回JSON响应
+            return jsonify({'data': response, 'error': None}), 200
+        except Exception as e:
+            # 处理异常情况
+            return jsonify({'data': None, 'error': str(e)}), 500
+    return wrapper
 
 def authorize():
 
