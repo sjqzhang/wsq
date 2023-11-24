@@ -234,7 +234,7 @@ func InitConfig() {
 					Default bool   `yaml:"default" mapstructure:"default"`
 				}{
 					{
-						Prefix:  "/v2/",
+						Prefix:  "/v2",
 						Forward: "http://127.0.0.1:5000",
 						Default: true,
 					},
@@ -616,7 +616,7 @@ func readMessages(conn *Conn) {
 			if err != nil {
 				logger.Println(err)
 			} else {
-				logger.Println(fmt.Sprintf("订阅消息:%v", string(data)))
+				logger.Println(fmt.Sprintf("subscribe message:%v", string(data)))
 			}
 
 		}
@@ -831,12 +831,13 @@ func main() {
 		type Raw struct {
 			GroupIds    []int64 `json:"group_ids"`
 			EventStatus string  `json:"event_status"`
+			StartTime   int64   `json:"start_time"`
 		}
 		var raw Raw
 		json.Unmarshal([]byte(incident.RawMessage), &raw)
-		if raw.EventStatus == "firing" {
+		if raw.EventStatus == "firing" && time.Now().Unix()-raw.StartTime < 60*60 { //只在60分钟内触发
 			if data, err := json.Marshal(subscription); err == nil {
-				logger.Println(fmt.Sprintf("发布消息：%v", string(data)))
+				logger.Println(fmt.Sprintf("publish alert：%v", string(data)))
 			} else {
 				logger.Println(err)
 			}
@@ -875,7 +876,7 @@ func main() {
 		subscription.Topic = "noc_incident"
 		subscription.Message = incident
 		if data, err := json.Marshal(subscription); err == nil {
-			logger.Println(fmt.Sprintf("发布消息：%v", string(data)))
+			logger.Println(fmt.Sprintf("publish noc_incident：%v", string(data)))
 		} else {
 			logger.Println(err)
 		}
@@ -896,7 +897,7 @@ func main() {
 			logger.Println("Failed to parse subscription message:", err)
 			return
 		}
-		logger.Println(fmt.Sprintf("发布消息：%v", subscription))
+		logger.Println(fmt.Sprintf("publish message：%v", subscription))
 		bus.Publish(WEBSOCKET_MESSAGE, subscription)
 		c.JSON(http.StatusOK, Response{
 			Code: 0,
