@@ -1,5 +1,11 @@
 
 ### flask app
+
+## 环境
+```
+python3
+```
+
 ## 授权
 ```json
 curl --location 'http://127.0.0.1:5001/auth' \
