@@ -1031,8 +1031,11 @@ func main() {
 				targetURL, _ := url.Parse(forwardCfg.Forward)
 				// 创建反向代理
 				proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+				c.Request.URL.Path= strings.TrimPrefix( strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix),targetURL.Path)
 				// 更改请求的主机头
 				c.Request.Host = targetURL.Host
+				c.Request.RequestURI = c.Request.URL.Path
 
 				// 将请求转发到代理服务器
 				proxy.ServeHTTP(c.Writer, c.Request)
@@ -1054,7 +1057,7 @@ func main() {
 		targetURL := forwardCfg.Forward
 
 		// 注册转发路由
-		routerGroup.Any(prefix+"/*path", func(c *gin.Context) {
+		router.Any(prefix+"/*path", func(c *gin.Context) {
 			// 创建反向代理
 
 			uri, err := url.Parse(targetURL)
@@ -1067,7 +1070,8 @@ func main() {
 
 			// 更改请求的主机头
 			c.Request.Host = uri.Host
-			c.Request.URL.Path = prefix + c.Param("path")
+			c.Request.URL.Path= strings.TrimPrefix( strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix),uri.Path)
+			c.Request.RequestURI= c.Request.URL.Path
 
 			// 将请求转发到目标URL
 			proxy.ServeHTTP(c.Writer, c.Request)
