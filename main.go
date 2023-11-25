@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/RussellLuo/timingwheel"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/casbin/casbin/v2"
 	mapset "github.com/deckarep/golang-set"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,8 @@ import (
 	"github.com/sjqzhang/bus"
 	"github.com/spf13/viper"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	jwt "github.com/appleboy/gin-jwt/v2"
 	"gopkg.in/yaml.v3"
 	"io/ioutil"
 	"log"
@@ -271,6 +274,171 @@ func InitHub() {
 	hubLocal = newHub()
 }
 
+// 定义用户结构体
+type User struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// 定义登录请求结构体
+type Login struct {
+	Username   string `json:"username"`
+	Password string `json:"password"`
+}
+
+// 定义 JWT 中间件的配置
+var authMiddleware *jwt.GinJWTMiddleware
+
+// 模拟从数据库中根据用户ID和密码验证用户
+func getUserByIDAndPassword(userID, password string) (*User, error) {
+	// 实现逻辑...
+
+	return &User{
+		ID:   userID,
+		Name: "admin",
+		Role: "admin",
+	}, nil
+}
+
+// 初始化 JWT 中间件和 Casbin 中间件
+func initMiddlewares(router *gin.Engine) {
+
+	// JWT 中间件配置
+	authMiddleware = &jwt.GinJWTMiddleware{
+		Realm:       "test zone",
+		Key:         []byte("secret key"),
+		Timeout:     time.Hour*24*365,
+		MaxRefresh:  time.Hour,
+		IdentityKey: "id",
+		//SigningAlgorithm: "HS256",
+		PayloadFunc: func(data interface{}) jwt.MapClaims {
+			if v, ok := data.(*User); ok {
+				return jwt.MapClaims{
+					"id":   v.ID,
+					"name": v.Name,
+					"role": v.Role,
+				}
+			}
+			return jwt.MapClaims{}
+		},
+		IdentityHandler: func(c *gin.Context) interface{} {
+			claims := jwt.ExtractClaims(c)
+
+			return &User{
+				ID:   claims["id"].(string),
+				Name: claims["name"].(string),
+				Role: claims["role"].(string),
+			}
+
+		},
+		Authenticator: func(c *gin.Context) (interface{}, error) {
+			var loginVals Login
+			if err := c.ShouldBind(&loginVals); err != nil {
+				return "", jwt.ErrMissingLoginValues
+			}
+			userID := loginVals.Username
+			password := loginVals.Password
+
+			// 根据用户ID和密码验证用户
+			user, err := getUserByIDAndPassword(userID, password)
+			if err != nil {
+				return nil, jwt.ErrFailedAuthentication
+			}
+
+			return user, nil
+		},
+		Authorizator: func(data interface{}, c *gin.Context) bool {
+			if user, ok := data.(*User); ok {
+				// 在这里根据用户的角色和请求路径进行权限验证
+				// 返回 true 表示允许访问该路径，返回 false 表示拒绝访问该路径
+				// 示例中只做了简单的角色验证，您可以根据实际需求进行自定义
+				return user.Role == "admin"
+			}
+			return false
+		},
+		Unauthorized: func(c *gin.Context, code int, message string) {
+			c.JSON(code, gin.H{
+				"code":    code,
+				"message": message,
+			})
+		},
+		TokenLookup:   "header: Authorization, query: token, cookie: jwt",
+		TokenHeadName: "Bearer",
+		TimeFunc:      time.Now,
+		LoginResponse: func(c *gin.Context, code int, message string, time time.Time) {
+			c.JSON(code, gin.H{
+				"code":    code,
+				"message": message,
+			})
+		},
+		LogoutResponse: func(c *gin.Context, code int) {
+			c.JSON(code, gin.H{
+				"code": code,
+			})
+		},
+		RefreshResponse: func(c *gin.Context, code int, message string, time time.Time) {
+			c.JSON(code, gin.H{
+				"code":    code,
+				"message": message,
+			})
+		},
+		HTTPStatusMessageFunc: func(e error, c *gin.Context) string {
+			return e.Error()
+		},
+
+	}
+
+	router.POST("/login", authMiddleware.LoginHandler)
+	router.POST("/refresh_token", authMiddleware.RefreshHandler)
+	router.POST("/logout", authMiddleware.LogoutHandler)
+
+	if err:=authMiddleware.MiddlewareInit();err!=nil {
+		panic(err)
+	}
+
+	router.Use(authMiddleware.MiddlewareFunc())
+
+	// Casbin 中间件配置
+	modelPath := "client/model.conf"
+	policyPath := "client/policy.csv"
+	//m, err := model.NewModelFromFile(modelPath)
+	//if err != nil {
+	//	panic(err)
+	//}
+	e, err := casbin.NewEnforcer(modelPath, policyPath)
+	if err != nil {
+		panic(err)
+	}
+	router.Use(func(c *gin.Context) {
+		// 获取用户角色
+
+		username:=""
+
+		if user,ok:=c.Get(authMiddleware.IdentityKey);ok {
+			username=user.(*User).Name
+		} else {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "you are not login",
+			})
+			c.Abort()
+			return
+		}
+
+		// 检查用户的权限
+		if ok, err := e.Enforce(username, c.Request.URL.Path, c.Request.Method); !ok || err != nil {
+			// 如果用户没有访问权限，返回错误信息
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "You don't have permission to access this resource",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	})
+}
+
 func InitDB() {
 	var err error
 	db, err = gorm.Open(config.Database.DbType, config.Database.Dsn)
@@ -285,8 +453,6 @@ func InitDB() {
 func InitRedis() {
 
 	rs = miniredis.NewMiniRedis()
-
-
 
 	if config.EmbedRedis.Password != "" {
 		rs.RequireAuth(config.EmbedRedis.Password)
@@ -670,7 +836,6 @@ func handleMessages(conn *Conn, subscription Subscription) {
 	hubLocal.Subscribe(conn, subscription)
 } // 获取订阅
 
-
 func Logger() gin.HandlerFunc {
 	// 创建日志输出器
 	logOutput := &lumberjack.Logger{
@@ -748,6 +913,7 @@ func main() {
 	go hubLocal.Run()
 	router := gin.Default()
 	router.Use(Logger())
+	//initMiddlewares(router)
 	routerGroup := router.Group(config.Server.Prefix)
 	routerGroup.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 		Output: logFile,
