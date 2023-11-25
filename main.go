@@ -124,36 +124,6 @@ func (m *CommonMap) LoadAll() map[string]interface{} {
 	return r
 }
 
-type NocIncident struct {
-	ID              int             `json:"id"`
-	IncidentID      string          `json:"incident_id"`
-	Title           string          `json:"title"`
-	StartTime       int64           `json:"start_time"`
-	EndTime         int64           `json:"end_time"`
-	Duration        int             `json:"duration"`
-	EscalationTime  int64           `json:"escalation_time"`
-	Region          json.RawMessage `json:"region" gorm:"region"`
-	ProductLine     string          `json:"product_line"`
-	Lvl2Team        string          `json:"lvl2_team"`
-	Lvl3Team        string          `json:"lvl3_team"`
-	Metric          string          `json:"metric"`
-	Record          json.RawMessage `json:"record" gorm:"record"`
-	ServiceCmdbName string          `json:"service_cmdb_name"`
-	Operator        string          `json:"operator"`
-	ReportURL       string          `json:"report_url"`
-	GroupName       string          `json:"group_name"`
-}
-
-type Alert struct {
-	ID          int             `json:"id"`
-	EventId     string          `json:"event_id"`
-	EventStatus string          `json:"event_status"`
-	Message     string          `json:"message"`
-	RawMessage  json.RawMessage `json:"raw_message"`
-	StartTime   int64           `json:"start_time"`
-	EndTime     int64           `json:"end_time"`
-}
-
 type Config struct {
 	Server struct {
 		Port   int    `mapstructure:"port" yaml:"port"`
@@ -180,13 +150,25 @@ type Config struct {
 		Forward string `yaml:"forward" mapstructure:"forward"`
 		Default bool   `yaml:"default" mapstructure:"default"`
 	} `yaml:"forwardConfig"`
+	Jwt struct {
+		SigningKey string `mapstructure:"signing_key" yaml:"signing_key"`
+		Timeout    int    `mapstructure:"timeout" yaml:"timeout"`
+		Enable     bool   `mapstructure:"enable" yaml:"enable"`
+	} `yaml:"jwt"`
+	Casbin struct {
+		ModelPath  string `mapstructure:"model_path" yaml:"model_path"`
+		PolicyPath string `mapstructure:"policy_path" yaml:"policy_path"`
+		UserPath   string `mapstructure:"user_path" yaml:"user_path"`
+		Enable     bool   `mapstructure:"enable" yaml:"enable"`
+	} `yaml:"casbin"`
 }
 
 func InitConfig() {
 	// 设置配置文件名称和路径
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath(".")
+	viper.AddConfigPath("./conf")
 
 	// 读取配置文件
 	err := viper.ReadInConfig()
@@ -242,6 +224,26 @@ func InitConfig() {
 						Default: true,
 					},
 				},
+				Jwt: struct {
+					SigningKey string `mapstructure:"signing_key" yaml:"signing_key"`
+					Timeout    int    `mapstructure:"timeout" yaml:"timeout"`
+					Enable     bool   `mapstructure:"enable" yaml:"enable"`
+				}{
+					SigningKey: "hello",
+					Timeout:    3600,
+					Enable:     true,
+				},
+				Casbin: struct {
+					ModelPath  string `mapstructure:"model_path" yaml:"model_path"`
+					PolicyPath string `mapstructure:"policy_path" yaml:"policy_path"`
+					UserPath   string `mapstructure:"user_path" yaml:"user_path"`
+					Enable     bool   `mapstructure:"enable" yaml:"enable"`
+				}{
+					ModelPath:  "conf/model.conf",
+					PolicyPath: "conf/policy.csv",
+					UserPath:   "conf/user.txt",
+					Enable:     true,
+				},
 			}
 
 			// 将配置数据转换为YAML格式
@@ -252,7 +254,7 @@ func InitConfig() {
 			}
 
 			// 将YAML数据写入配置文件
-			err = os.WriteFile("config.yaml", configBytes, 0644)
+			err = os.WriteFile("conf/config.yaml", configBytes, 0644)
 			if err != nil {
 				fmt.Println("Failed to write configuration template:", err)
 				return
@@ -283,7 +285,7 @@ type User struct {
 
 // 定义登录请求结构体
 type Login struct {
-	Username   string `json:"username"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
@@ -292,13 +294,29 @@ var authMiddleware *jwt.GinJWTMiddleware
 
 // 模拟从数据库中根据用户ID和密码验证用户
 func getUserByIDAndPassword(userID, password string) (*User, error) {
-	// 实现逻辑...
+	// 从conf/user.txt中读取用户信息
 
-	return &User{
-		ID:   userID,
-		Name: "admin",
-		Role: "admin",
-	}, nil
+	content, err := ioutil.ReadFile(config.Casbin.UserPath)
+	if err != nil {
+		logger.Println(err)
+		return nil, err
+	}
+
+	users := strings.Split(string(content), "\n")
+
+	for _, user := range users {
+		userInfo := strings.Split(user, ",")
+		if userInfo[0] == userID && userInfo[1] == password {
+			return &User{
+				ID:   userID,
+				Name: userInfo[0],
+				Role: "",
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("用户名或密码错误")
+
 }
 
 // 初始化 JWT 中间件和 Casbin 中间件
@@ -307,11 +325,10 @@ func initMiddlewares(router *gin.Engine) {
 	// JWT 中间件配置
 	authMiddleware = &jwt.GinJWTMiddleware{
 		Realm:       "test zone",
-		Key:         []byte("secret key"),
-		Timeout:     time.Hour*24*365,
+		Key:         []byte(config.Jwt.SigningKey),
+		Timeout:     time.Second * time.Duration(config.Jwt.Timeout),
 		MaxRefresh:  time.Hour,
 		IdentityKey: "id",
-		//SigningAlgorithm: "HS256",
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			if v, ok := data.(*User); ok {
 				return jwt.MapClaims{
@@ -353,7 +370,8 @@ func initMiddlewares(router *gin.Engine) {
 				// 在这里根据用户的角色和请求路径进行权限验证
 				// 返回 true 表示允许访问该路径，返回 false 表示拒绝访问该路径
 				// 示例中只做了简单的角色验证，您可以根据实际需求进行自定义
-				return user.Role == "admin"
+				_ = user
+				return true
 			}
 			return false
 		},
@@ -386,22 +404,23 @@ func initMiddlewares(router *gin.Engine) {
 		HTTPStatusMessageFunc: func(e error, c *gin.Context) string {
 			return e.Error()
 		},
-
 	}
 
 	router.POST("/login", authMiddleware.LoginHandler)
 	router.POST("/refresh_token", authMiddleware.RefreshHandler)
 	router.POST("/logout", authMiddleware.LogoutHandler)
 
-	if err:=authMiddleware.MiddlewareInit();err!=nil {
+	if err := authMiddleware.MiddlewareInit(); err != nil {
 		panic(err)
 	}
 
-	router.Use(authMiddleware.MiddlewareFunc())
+	if config.Jwt.Enable {
+		router.Use(authMiddleware.MiddlewareFunc())
+	}
 
 	// Casbin 中间件配置
-	modelPath := "client/model.conf"
-	policyPath := "client/policy.csv"
+	modelPath := config.Casbin.ModelPath
+	policyPath := config.Casbin.PolicyPath
 	//m, err := model.NewModelFromFile(modelPath)
 	//if err != nil {
 	//	panic(err)
@@ -410,19 +429,14 @@ func initMiddlewares(router *gin.Engine) {
 	if err != nil {
 		panic(err)
 	}
-	router.Use(func(c *gin.Context) {
+
+	casbinMiddleWare := func(c *gin.Context) {
 		// 获取用户角色
 
-		username:=""
+		username := "anonymous"
 
-		if user,ok:=c.Get(authMiddleware.IdentityKey);ok {
-			username=user.(*User).Name
-		} else {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error": "you are not login",
-			})
-			c.Abort()
-			return
+		if user, ok := c.Get(authMiddleware.IdentityKey); ok {
+			username = user.(*User).Name
 		}
 
 		// 检查用户的权限
@@ -436,14 +450,15 @@ func initMiddlewares(router *gin.Engine) {
 		}
 
 		c.Next()
-	})
+	}
+	if config.Casbin.Enable {
+		router.Use(casbinMiddleWare)
+	}
 }
 
 func InitDB() {
 	var err error
 	db, err = gorm.Open(config.Database.DbType, config.Database.Dsn)
-	db.AutoMigrate(&NocIncident{})
-	db.AutoMigrate(&Alert{})
 	if err != nil {
 		panic(err)
 	}
@@ -481,6 +496,46 @@ func InitRedis() {
 var ts *timingwheel.TimingWheel
 
 func init() {
+
+	//判断conf文件夹是否存在，不存在则创建
+	if _, err := os.Stat("conf"); os.IsNotExist(err) {
+		os.Mkdir("conf", os.ModePerm)
+		//自动生成model.conf,policy.conf文件
+		model_conf := `[request_definition]
+r = sub, obj, act
+
+[policy_definition]
+p = sub, obj, act
+
+[role_definition]
+g = _, _
+
+[policy_effect]
+e = some(where (p.eft == allow))
+
+[matchers]
+m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
+
+
+`
+		policy_conf := `p, read_role, /protected, GET
+p, write_role, /api/user,GET
+p, read_role, /ws/alert,GET
+g, admin_role, read_role
+g, admin_role,write_role
+g, admin,admin_role
+g,anonymous,read_role
+`
+		user_txt := `anonymous,anonymous`
+		ioutil.WriteFile("conf/model.conf", []byte(model_conf), 0644)
+		ioutil.WriteFile("conf/policy.csv", []byte(policy_conf), 0644)
+		ioutil.WriteFile("conf/user.txt", []byte(user_txt), 0644)
+	}
+
+	//判断log文件夹是否存在，不存在则创建
+	if _, err := os.Stat("log"); os.IsNotExist(err) {
+		os.Mkdir("log", os.ModePerm)
+	}
 
 	bus.Subscribe(WEBSOCKET_MESSAGE, 1, func(ctx context.Context, message interface{}) {
 		if message == nil {
@@ -839,7 +894,7 @@ func handleMessages(conn *Conn, subscription Subscription) {
 func Logger() gin.HandlerFunc {
 	// 创建日志输出器
 	logOutput := &lumberjack.Logger{
-		Filename:   "access.log",
+		Filename:   "log/access.log",
 		MaxSize:    100, // 单位：MB
 		MaxBackups: 3,
 		MaxAge:     30,    // 单位：天
@@ -903,17 +958,17 @@ func main() {
 	InitHub()
 
 	logFile := &lumberjack.Logger{
-		Filename:   "gin.log", // 日志文件名称
-		MaxSize:    100,       // 每个日志文件的最大大小（以MB为单位）
-		MaxBackups: 5,         // 保留的旧日志文件的最大个数
-		MaxAge:     30,        // 保留的旧日志文件的最大天数
-		Compress:   true,      // 是否压缩旧的日志文件
+		Filename:   "log/gin.log", // 日志文件名称
+		MaxSize:    100,           // 每个日志文件的最大大小（以MB为单位）
+		MaxBackups: 5,             // 保留的旧日志文件的最大个数
+		MaxAge:     30,            // 保留的旧日志文件的最大天数
+		Compress:   true,          // 是否压缩旧的日志文件
 	}
 	logger = log.New(logFile, "[WS] ", log.LstdFlags)
 	go hubLocal.Run()
 	router := gin.Default()
 	router.Use(Logger())
-	//initMiddlewares(router)
+	initMiddlewares(router)
 	routerGroup := router.Group(config.Server.Prefix)
 	routerGroup.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 		Output: logFile,
@@ -949,169 +1004,6 @@ func main() {
 		}
 		go readMessages(con)
 		go writeMessages(con)
-	})
-
-	routerGroup.GET("/noc_incident", func(c *gin.Context) {
-		var incidents []NocIncident
-		// 取当天的数据
-		// 取过去24小时的数据
-
-		startTime := c.Query("start_time")
-
-		endTime := c.Query("end_time")
-
-		if startTime == "" {
-
-			today := time.Now().UTC()
-			todayStart := today.Add(time.Hour * -24)
-			db.Where("start_time >= ? AND start_time < ?", todayStart.Unix(), today.Unix()).Find(&incidents)
-			c.JSON(200, Response{
-				Code: 0,
-				Data: incidents,
-				Msg:  "ok",
-			})
-		} else {
-			if endTime == "" {
-				endTime = startTime
-			}
-			db.Where("start_time >= ? AND start_time < ?", startTime, endTime).Find(&incidents)
-			c.JSON(200, Response{
-				Code: 0,
-				Data: incidents,
-				Msg:  "ok",
-			})
-		}
-
-	})
-
-	routerGroup.GET("/alert", func(c *gin.Context) {
-		var incidents []Alert
-		// 取当天的数据
-		// 取过去24小时的数据
-
-		startTime := c.Query("start_time")
-
-		endTime := c.Query("end_time")
-
-		groupId := c.Query("group_id")
-
-		groupWhere := ""
-		if groupId != "" {
-			groupWhere = "and (json_extract(raw_message, '$.group_ids') like '[" + groupId + ",%' or json_extract(raw_message, '$.group_ids') like '%," + groupId + ",%'  or json_extract(raw_message, '$.group_ids') like '%," + groupId + "]' or json_extract(raw_message, '$.group_ids') like '[" + groupId + "]')"
-		}
-
-		if startTime == "" {
-
-			today := time.Now().UTC()
-			todayStart := today.Add(time.Hour * -24)
-			if groupWhere != "" {
-				db.Debug().Where("start_time >= ? AND start_time <= ? and event_status='firing' "+groupWhere, todayStart.Unix(), today.Unix()).Find(&incidents)
-			} else {
-				db.Where("start_time >= ? AND start_time <= ? and event_status='firing'", todayStart.Unix(), today.Unix()).Find(&incidents)
-			}
-			c.JSON(200, Response{
-				Code: 0,
-				Data: incidents,
-				Msg:  "ok",
-			})
-		} else {
-			if endTime == "" {
-				endTime = startTime
-			}
-			if groupWhere != "" {
-				db.Where("start_time >= ? AND start_time <= ? and event_status='firing' "+groupWhere, startTime, endTime).Find(&incidents)
-			} else {
-				db.Where("start_time >= ? AND start_time <= ? and event_status='firing'", startTime, endTime).Find(&incidents)
-			}
-			c.JSON(200, Response{
-				Code: 0,
-				Data: incidents,
-				Msg:  "ok",
-			})
-		}
-
-	})
-
-	routerGroup.POST("/alert", func(c *gin.Context) {
-
-		var incident Alert
-
-		var subscription Subscription
-		err := c.BindJSON(&incident)
-		if err != nil {
-			logger.Println("Failed to parse subscription message:", err)
-			return
-		}
-		var oldIncident Alert
-		if db.First(&oldIncident, "event_id=?", incident.EventId).Error != nil {
-			db.Create(&incident)
-		} else {
-			if oldIncident.ID != 0 {
-				incident.ID = oldIncident.ID
-				db.Save(incident)
-			}
-		}
-		subscription.Topic = "alert"
-		subscription.Message = incident
-		type Raw struct {
-			GroupIds    []int64 `json:"group_ids"`
-			EventStatus string  `json:"event_status"`
-			StartTime   int64   `json:"start_time"`
-		}
-		var raw Raw
-		json.Unmarshal([]byte(incident.RawMessage), &raw)
-		if raw.EventStatus == "firing" && time.Now().Unix()-raw.StartTime < 60*60 { //只在60分钟内触发
-			if data, err := json.Marshal(subscription); err == nil {
-				logger.Println(fmt.Sprintf("publish alert：%v", string(data)))
-			} else {
-				logger.Println(err)
-			}
-			for _, groupId := range raw.GroupIds {
-				subscription.ID = fmt.Sprintf("%v", groupId)
-				bus.Publish(WEBSOCKET_MESSAGE, subscription)
-			}
-		}
-		c.JSON(http.StatusOK, Response{
-			Code: 0,
-			Data: subscription,
-			Msg:  "ok",
-		})
-
-	})
-
-	routerGroup.POST("/noc_incident", func(c *gin.Context) {
-
-		var incident NocIncident
-
-		var subscription Subscription
-		err := c.BindJSON(&incident)
-		if err != nil {
-			logger.Println("Failed to parse subscription message:", err)
-			return
-		}
-		var oldIncident NocIncident
-		if db.First(&oldIncident, "incident_id=?", incident.IncidentID).Error != nil {
-			db.Create(&incident)
-		} else {
-			if oldIncident.ID != 0 {
-				incident.ID = oldIncident.ID
-				db.Save(incident)
-			}
-		}
-		subscription.Topic = "noc_incident"
-		subscription.Message = incident
-		if data, err := json.Marshal(subscription); err == nil {
-			logger.Println(fmt.Sprintf("publish noc_incident：%v", string(data)))
-		} else {
-			logger.Println(err)
-		}
-		bus.Publish(WEBSOCKET_MESSAGE, subscription)
-		c.JSON(http.StatusOK, Response{
-			Code: 0,
-			Data: subscription,
-			Msg:  "ok",
-		})
-
 	})
 
 	routerGroup.POST("/api", func(c *gin.Context) {
