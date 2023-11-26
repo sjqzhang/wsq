@@ -470,15 +470,17 @@ func InitServer() {
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
 
-	router.GET("/", func(c *gin.Context) {
-		body, err := ioutil.ReadFile("home.html")
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		c.Writer.Write(body)
+	if config.Server.Prefix != "" && config.Server.Prefix != "/" {
+		router.GET("/", func(c *gin.Context) {
+			body, err := ioutil.ReadFile("home.html")
+			if err != nil {
+				logger.Println(err)
+				return
+			}
+			c.Writer.Write(body)
 
-	})
+		})
+	}
 	routerGroup.GET("", func(c *gin.Context) {
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
@@ -543,6 +545,12 @@ func InitServer() {
 		})
 
 		// 注册转发路由
+		if prefix == "/" || prefix == "" {
+			cfg,_:=json.Marshal(forwardCfg)
+			msg:=fmt.Sprintf("(ERROR)prefix can't be empty.\nforwardCfg:%v",string(cfg))
+			logger.Println(msg)
+			panic(msg)
+		}
 		router.Any(prefix+"/*path", middlewares...)
 	}
 
