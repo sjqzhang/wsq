@@ -56,6 +56,10 @@ type Response struct {
 	Msg  string      `json:"message"`
 }
 
+type Server struct {
+	router *gin.Engine
+}
+
 func response(code int, data interface{}, msg string) []byte {
 	resp := Response{
 		Code: code,
@@ -83,6 +87,11 @@ type Conn struct {
 type CommonMap struct {
 	sync.RWMutex
 	m map[string]interface{}
+}
+
+type CasbinMiddleware struct {
+	enforcer   *casbin.Enforcer
+	middleWare func(c *gin.Context)
 }
 
 func NewCommonMap() *CommonMap {
@@ -146,9 +155,10 @@ type Config struct {
 	} `yaml:"redis"`
 
 	ForwardConfig []struct {
-		Prefix  string `yaml:"prefix" mapstructure:"prefix"`
-		Forward string `yaml:"forward" mapstructure:"forward"`
-		Default bool   `yaml:"default" mapstructure:"default"`
+		Prefix      string `yaml:"prefix" mapstructure:"prefix"`
+		Forward     string `yaml:"forward" mapstructure:"forward"`
+		Default     bool   `yaml:"default" mapstructure:"default"`
+		RequireAuth bool   `yaml:"require_auth" mapstructure:"require_auth"`
 	} `yaml:"forwardConfig"`
 	Jwt struct {
 		SigningKey string `mapstructure:"signing_key" yaml:"signing_key"`
@@ -214,14 +224,16 @@ func InitConfig() {
 					DB:       0,
 				},
 				ForwardConfig: []struct {
-					Prefix  string `yaml:"prefix" mapstructure:"prefix"`
-					Forward string `yaml:"forward" mapstructure:"forward"`
-					Default bool   `yaml:"default" mapstructure:"default"`
+					Prefix      string `yaml:"prefix" mapstructure:"prefix"`
+					Forward     string `yaml:"forward" mapstructure:"forward"`
+					Default     bool   `yaml:"default" mapstructure:"default"`
+					RequireAuth bool   `yaml:"require_auth" mapstructure:"require_auth"`
 				}{
 					{
-						Prefix:  "/v2",
-						Forward: "http://127.0.0.1:5000",
-						Default: true,
+						Prefix:      "/v2",
+						Forward:     "http://127.0.0.1:5000",
+						Default:     true,
+						RequireAuth: false,
 					},
 				},
 				Jwt: struct {
@@ -292,6 +304,8 @@ type Login struct {
 // 定义 JWT 中间件的配置
 var authMiddleware *jwt.GinJWTMiddleware
 
+var casbinMiddle *CasbinMiddleware
+
 // 模拟从数据库中根据用户ID和密码验证用户
 func getUserByIDAndPassword(userID, password string) (*User, error) {
 	// 从conf/user.txt中读取用户信息
@@ -320,7 +334,7 @@ func getUserByIDAndPassword(userID, password string) (*User, error) {
 }
 
 // 初始化 JWT 中间件和 Casbin 中间件
-func initMiddlewares(router *gin.Engine) {
+func InitJwt() {
 
 	// JWT 中间件配置
 	authMiddleware = &jwt.GinJWTMiddleware{
@@ -379,6 +393,7 @@ func initMiddlewares(router *gin.Engine) {
 			c.JSON(code, gin.H{
 				"code":    code,
 				"message": message,
+				"data":    nil,
 			})
 		},
 		TokenLookup:   "header: Authorization, query: token, cookie: jwt",
@@ -387,7 +402,8 @@ func initMiddlewares(router *gin.Engine) {
 		LoginResponse: func(c *gin.Context, code int, message string, time time.Time) {
 			c.JSON(code, gin.H{
 				"code":    code,
-				"message": message,
+				"data":    message,
+				"message": "ok",
 			})
 		},
 		LogoutResponse: func(c *gin.Context, code int) {
@@ -406,54 +422,14 @@ func initMiddlewares(router *gin.Engine) {
 		},
 	}
 
-	router.POST("/login", authMiddleware.LoginHandler)
-	router.POST("/refresh_token", authMiddleware.RefreshHandler)
-	router.POST("/logout", authMiddleware.LogoutHandler)
-
 	if err := authMiddleware.MiddlewareInit(); err != nil {
 		panic(err)
 	}
 
-	if config.Jwt.Enable {
-		router.Use(authMiddleware.MiddlewareFunc())
-	}
-
-	// Casbin 中间件配置
-	modelPath := config.Casbin.ModelPath
-	policyPath := config.Casbin.PolicyPath
-	//m, err := model.NewModelFromFile(modelPath)
-	//if err != nil {
-	//	panic(err)
+	//if config.Jwt.Enable {
+	//	router.Use(authMiddleware.MiddlewareFunc())
 	//}
-	e, err := casbin.NewEnforcer(modelPath, policyPath)
-	if err != nil {
-		panic(err)
-	}
 
-	casbinMiddleWare := func(c *gin.Context) {
-		// 获取用户角色
-
-		username := "anonymous"
-
-		if user, ok := c.Get(authMiddleware.IdentityKey); ok {
-			username = user.(*User).Name
-		}
-
-		// 检查用户的权限
-		if ok, err := e.Enforce(username, c.Request.URL.Path, c.Request.Method); !ok || err != nil {
-			// 如果用户没有访问权限，返回错误信息
-			c.JSON(http.StatusForbidden, gin.H{
-				"error": "You don't have permission to access this resource",
-			})
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
-	if config.Casbin.Enable {
-		router.Use(casbinMiddleWare)
-	}
 }
 
 func InitDB() {
@@ -463,6 +439,116 @@ func InitDB() {
 		panic(err)
 	}
 
+}
+
+var server *Server
+
+func InitServer() {
+
+	router := gin.Default()
+	router.Use(Logger())
+	routerGroup := router.Group(config.Server.Prefix)
+
+	logFile := &lumberjack.Logger{
+		Filename:   "log/gin.log", // 日志文件名称
+		MaxSize:    100,           // 每个日志文件的最大大小（以MB为单位）
+		MaxBackups: 5,             // 保留的旧日志文件的最大个数
+		MaxAge:     30,            // 保留的旧日志文件的最大天数
+		Compress:   true,          // 是否压缩旧的日志文件
+	}
+	logger = log.New(logFile, "[WS] ", log.LstdFlags)
+	go hubLocal.Run()
+
+	routerGroup.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+		Output: logFile,
+	}))
+	if config.Server.Debug {
+		pprof.Register(router)
+	}
+
+	gin.DefaultErrorWriter = logFile
+	wd, _ := os.Getwd()
+	os.Chdir(wd + "/examples/message")
+
+	router.GET("/", func(c *gin.Context) {
+		body, err := ioutil.ReadFile("home.html")
+		if err != nil {
+			logger.Println(err)
+			return
+		}
+		c.Writer.Write(body)
+
+	})
+	routerGroup.GET("", func(c *gin.Context) {
+		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			logger.Println("Failed to upgrade connection:", err)
+			return
+		}
+		con := &Conn{
+			Conn:       conn,
+			RWMutex:    sync.RWMutex{},
+			send:       make(chan WSMessage, 1000),
+			createTime: time.Now().Unix(),
+		}
+		go readMessages(con)
+		go writeMessages(con)
+	})
+
+	routerGroup.POST("/api", server.HandlerWebSocketResponse)
+	var middlewares []gin.HandlerFunc
+	if config.Jwt.Enable {
+		middlewares = append(middlewares, authMiddleware.MiddlewareFunc())
+	}
+	if config.Casbin.Enable {
+		middlewares = append(middlewares, casbinMiddle.middleWare)
+	}
+	middlewares = append(middlewares, server.HandlerNoRoute)
+	router.NoRoute(middlewares...)
+
+	router.POST("/login", authMiddleware.LoginHandler)
+	router.POST("/refresh_token", authMiddleware.RefreshHandler)
+	router.POST("/logout", authMiddleware.LogoutHandler)
+
+	for _, forwardCfg := range config.ForwardConfig {
+		prefix := forwardCfg.Prefix
+		if !strings.HasPrefix(prefix, "/") {
+			prefix = "/" + prefix
+		}
+		targetURL := forwardCfg.Forward
+
+		var middlewares []gin.HandlerFunc
+		if forwardCfg.RequireAuth {
+			middlewares = append(middlewares, authMiddleware.MiddlewareFunc())
+			middlewares = append(middlewares, casbinMiddle.middleWare)
+		}
+		middlewares = append(middlewares, func(c *gin.Context) {
+			// 创建反向代理
+
+			uri, err := url.Parse(targetURL)
+			if err != nil {
+				logger.Println(err)
+				c.Writer.Write([]byte(err.Error()))
+				return
+			}
+			proxy := httputil.NewSingleHostReverseProxy(uri)
+
+			// 更改请求的主机头
+			c.Request.Host = uri.Host
+			c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), uri.Path)
+			c.Request.RequestURI = c.Request.URL.Path
+
+			// 将请求转发到目标URL
+			proxy.ServeHTTP(c.Writer, c.Request)
+		})
+
+		// 注册转发路由
+		router.Any(prefix+"/*path", middlewares...)
+	}
+
+	server = &Server{
+		router: router,
+	}
 }
 
 func InitRedis() {
@@ -495,6 +581,44 @@ func InitRedis() {
 
 var ts *timingwheel.TimingWheel
 
+func InitCasbin() {
+
+	casbinMiddle = &CasbinMiddleware{}
+
+	// Casbin 中间件配置
+	modelPath := config.Casbin.ModelPath
+	policyPath := config.Casbin.PolicyPath
+
+	e, err := casbin.NewEnforcer(modelPath, policyPath)
+	if err != nil {
+		panic(err)
+	}
+
+	casbinMiddle.enforcer = e
+	casbinMiddle.middleWare = func(c *gin.Context) {
+		// 获取用户角色
+
+		username := "anonymous"
+
+		if user, ok := c.Get(authMiddleware.IdentityKey); ok {
+			username = user.(*User).Name
+		}
+
+		// 检查用户的权限
+		if ok, err := e.Enforce(username, c.FullPath(), c.Request.Method); !ok || err != nil {
+			// 如果用户没有访问权限，返回错误信息
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "You don't have permission to access this resource",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+
+}
+
 func init() {
 
 	//判断conf文件夹是否存在，不存在则创建
@@ -511,7 +635,7 @@ p = sub, obj, act
 g = _, _
 
 [policy_effect]
-e = some(where (p.eft == allow))
+enforcer = some(where (p.eft == allow))
 
 [matchers]
 m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
@@ -547,6 +671,9 @@ g,anonymous,read_role
 	})
 	ts = timingwheel.NewTimingWheel(time.Second, 3)
 	ts.Start()
+
+	InitConfig()
+
 }
 
 var upgrader = websocket.Upgrader{
@@ -950,134 +1077,60 @@ func Logger() gin.HandlerFunc {
 
 var addr = flag.String("addr", ":8866", "http service address")
 
-func main() {
+func (s *Server) HandlerNoRoute(c *gin.Context) {
+	for _, forwardCfg := range config.ForwardConfig {
+		if forwardCfg.Default {
 
-	InitConfig()
+			// 创建代理服务器的目标URL
+			targetURL, _ := url.Parse(forwardCfg.Forward)
+			// 创建反向代理
+			proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+			c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), targetURL.Path)
+			// 更改请求的主机头
+			c.Request.Host = targetURL.Host
+			c.Request.RequestURI = c.Request.URL.Path
+
+			// 将请求转发到代理服务器
+			proxy.ServeHTTP(c.Writer, c.Request)
+			return
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{
+		"code": 404,
+		"msg":  "not found",
+	})
+
+}
+
+func (s *Server) HandlerWebSocketResponse(c *gin.Context) {
+	var subscription Subscription
+	err := c.BindJSON(&subscription)
+	if err != nil {
+		logger.Println("Failed to parse subscription message:", err)
+		return
+	}
+	logger.Println(fmt.Sprintf("publish message：%v", subscription))
+	bus.Publish(WEBSOCKET_MESSAGE, subscription)
+	c.JSON(http.StatusOK, Response{
+		Code: 0,
+		Data: subscription,
+		Msg:  "ok",
+	})
+}
+
+func (s *Server) Run() {
+
+	s.router.Run(fmt.Sprintf(":%v", config.Server.Port))
+
+}
+
+func main() {
 	InitDB()
 	InitRedis()
 	InitHub()
-
-	logFile := &lumberjack.Logger{
-		Filename:   "log/gin.log", // 日志文件名称
-		MaxSize:    100,           // 每个日志文件的最大大小（以MB为单位）
-		MaxBackups: 5,             // 保留的旧日志文件的最大个数
-		MaxAge:     30,            // 保留的旧日志文件的最大天数
-		Compress:   true,          // 是否压缩旧的日志文件
-	}
-	logger = log.New(logFile, "[WS] ", log.LstdFlags)
-	go hubLocal.Run()
-	router := gin.Default()
-	router.Use(Logger())
-	initMiddlewares(router)
-	routerGroup := router.Group(config.Server.Prefix)
-	routerGroup.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-		Output: logFile,
-	}))
-	if config.Server.Debug {
-		pprof.Register(router)
-	}
-
-	gin.DefaultErrorWriter = logFile
-	wd, _ := os.Getwd()
-	os.Chdir(wd + "/examples/message")
-
-	router.GET("/", func(c *gin.Context) {
-		body, err := ioutil.ReadFile("home.html")
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-		c.Writer.Write(body)
-
-	})
-	routerGroup.GET("", func(c *gin.Context) {
-		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-		if err != nil {
-			logger.Println("Failed to upgrade connection:", err)
-			return
-		}
-		con := &Conn{
-			Conn:       conn,
-			RWMutex:    sync.RWMutex{},
-			send:       make(chan WSMessage, 1000),
-			createTime: time.Now().Unix(),
-		}
-		go readMessages(con)
-		go writeMessages(con)
-	})
-
-	routerGroup.POST("/api", func(c *gin.Context) {
-
-		var subscription Subscription
-		err := c.BindJSON(&subscription)
-		if err != nil {
-			logger.Println("Failed to parse subscription message:", err)
-			return
-		}
-		logger.Println(fmt.Sprintf("publish message：%v", subscription))
-		bus.Publish(WEBSOCKET_MESSAGE, subscription)
-		c.JSON(http.StatusOK, Response{
-			Code: 0,
-			Data: subscription,
-			Msg:  "ok",
-		})
-
-	})
-
-	router.NoRoute(func(c *gin.Context) {
-		for _, forwardCfg := range config.ForwardConfig {
-			if forwardCfg.Default {
-				// 创建代理服务器的目标URL
-				targetURL, _ := url.Parse(forwardCfg.Forward)
-				// 创建反向代理
-				proxy := httputil.NewSingleHostReverseProxy(targetURL)
-
-				c.Request.URL.Path= strings.TrimPrefix( strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix),targetURL.Path)
-				// 更改请求的主机头
-				c.Request.Host = targetURL.Host
-				c.Request.RequestURI = c.Request.URL.Path
-
-				// 将请求转发到代理服务器
-				proxy.ServeHTTP(c.Writer, c.Request)
-				return
-			}
-		}
-		c.JSON(http.StatusNotFound, gin.H{
-			"code": 404,
-			"msg":  "not found",
-		})
-
-	})
-
-	for _, forwardCfg := range config.ForwardConfig {
-		prefix := forwardCfg.Prefix
-		if !strings.HasPrefix(prefix, "/") {
-			prefix = "/" + prefix
-		}
-		targetURL := forwardCfg.Forward
-
-		// 注册转发路由
-		router.Any(prefix+"/*path", func(c *gin.Context) {
-			// 创建反向代理
-
-			uri, err := url.Parse(targetURL)
-			if err != nil {
-				logger.Println(err)
-				c.Writer.Write([]byte(err.Error()))
-				return
-			}
-			proxy := httputil.NewSingleHostReverseProxy(uri)
-
-			// 更改请求的主机头
-			c.Request.Host = uri.Host
-			c.Request.URL.Path= strings.TrimPrefix( strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix),uri.Path)
-			c.Request.RequestURI= c.Request.URL.Path
-
-			// 将请求转发到目标URL
-			proxy.ServeHTTP(c.Writer, c.Request)
-		})
-	}
-
-	router.Run(fmt.Sprintf(":%v", config.Server.Port))
-
+	InitCasbin()
+	InitJwt()
+	InitServer()
+	server.Run()
 }
