@@ -17,6 +17,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/redis/go-redis/v9"
 	"github.com/sjqzhang/bus"
+	"github.com/sjqzhang/requests"
 	"github.com/spf13/viper"
 	"gopkg.in/natefinch/lumberjack.v2"
 
@@ -166,10 +167,11 @@ type Config struct {
 		Enable     bool   `mapstructure:"enable" yaml:"enable"`
 	} `yaml:"jwt"`
 	Casbin struct {
-		ModelPath  string `mapstructure:"model_path" yaml:"model_path"`
-		PolicyPath string `mapstructure:"policy_path" yaml:"policy_path"`
-		UserPath   string `mapstructure:"user_path" yaml:"user_path"`
-		Enable     bool   `mapstructure:"enable" yaml:"enable"`
+		ModelPath  string            `mapstructure:"model_path" yaml:"model_path"`
+		PolicyPath string            `mapstructure:"policy_path" yaml:"policy_path"`
+		UserPath   string            `mapstructure:"user_path" yaml:"user_path"`
+		FieldMap   map[string]string `mapstructure:"field_map" yaml:"field_map"`
+		Enable     bool              `mapstructure:"enable" yaml:"enable"`
 	} `yaml:"casbin"`
 }
 
@@ -246,15 +248,20 @@ func InitConfig() {
 					Enable:     true,
 				},
 				Casbin: struct {
-					ModelPath  string `mapstructure:"model_path" yaml:"model_path"`
-					PolicyPath string `mapstructure:"policy_path" yaml:"policy_path"`
-					UserPath   string `mapstructure:"user_path" yaml:"user_path"`
-					Enable     bool   `mapstructure:"enable" yaml:"enable"`
+					ModelPath  string            `mapstructure:"model_path" yaml:"model_path"`
+					PolicyPath string            `mapstructure:"policy_path" yaml:"policy_path"`
+					UserPath   string            `mapstructure:"user_path" yaml:"user_path"`
+					FieldMap   map[string]string `mapstructure:"field_map" yaml:"field_map"`
+					Enable     bool              `mapstructure:"enable" yaml:"enable"`
 				}{
 					ModelPath:  "conf/model.conf",
 					PolicyPath: "conf/policy.csv",
 					UserPath:   "conf/user.txt",
-					Enable:     true,
+					FieldMap: map[string]string{
+						"username": "username",
+						"password": "password",
+					},
+					Enable: true,
 				},
 			}
 
@@ -306,8 +313,45 @@ var authMiddleware *jwt.GinJWTMiddleware
 
 var casbinMiddle *CasbinMiddleware
 
+var userChecker IGetUserByIDAndPassword
+
+type IGetUserByIDAndPassword interface {
+	getUserByIDAndPassword(userID, password string) (*User, error)
+}
+
+type FileGetUserByIDAndPasswordChecker struct {
+}
+
+type NetGetUserByIDAndPasswordChecker struct {
+}
+
+func (f *NetGetUserByIDAndPasswordChecker) getUserByIDAndPassword(userID, password string) (*User, error) {
+	userFieldName := "username"
+	pwdFieldName := "password"
+	if v, ok := config.Casbin.FieldMap["username"]; ok {
+		userFieldName = v
+	}
+	if v, ok := config.Casbin.FieldMap["password"]; ok {
+		pwdFieldName = v
+	}
+	data := make(map[string]string)
+	data[userFieldName] = userID
+	data[pwdFieldName] = password
+	dataBytes, err := json.Marshal(data)
+	resp, err := requests.PostJson(config.Casbin.UserPath, string(dataBytes))
+	if err != nil || resp.R.StatusCode != 200 {
+		return nil, err
+	}
+	return &User{
+		ID:   userID,
+		Name: userID,
+		Role: "",
+	}, nil
+
+}
+
 // 模拟从数据库中根据用户ID和密码验证用户
-func getUserByIDAndPassword(userID, password string) (*User, error) {
+func (f *FileGetUserByIDAndPasswordChecker) getUserByIDAndPassword(userID, password string) (*User, error) {
 	// 从conf/user.txt中读取用户信息
 
 	content, err := ioutil.ReadFile(config.Casbin.UserPath)
@@ -372,7 +416,7 @@ func InitJwt() {
 			password := loginVals.Password
 
 			// 根据用户ID和密码验证用户
-			user, err := getUserByIDAndPassword(userID, password)
+			user, err := userChecker.getUserByIDAndPassword(userID, password)
 			if err != nil {
 				return nil, jwt.ErrFailedAuthentication
 			}
@@ -546,8 +590,8 @@ func InitServer() {
 
 		// 注册转发路由
 		if prefix == "/" || prefix == "" {
-			cfg,_:=json.Marshal(forwardCfg)
-			msg:=fmt.Sprintf("(ERROR)prefix can't be empty.\nforwardCfg:%v",string(cfg))
+			cfg, _ := json.Marshal(forwardCfg)
+			msg := fmt.Sprintf("(ERROR)prefix can't be empty.\nforwardCfg:%v", string(cfg))
 			logger.Println(msg)
 			panic(msg)
 		}
@@ -681,6 +725,12 @@ g,anonymous,read_role
 	ts.Start()
 
 	InitConfig()
+
+	if strings.HasPrefix(config.Casbin.UserPath, "http") {
+		userChecker = &NetGetUserByIDAndPasswordChecker{}
+	} else {
+		userChecker = &FileGetUserByIDAndPasswordChecker{}
+	}
 
 }
 
