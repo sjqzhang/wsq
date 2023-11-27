@@ -643,7 +643,7 @@ p = sub, obj, act
 g = _, _
 
 [policy_effect]
-enforcer = some(where (p.eft == allow))
+e = some(where (p.eft == allow))
 
 [matchers]
 m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
