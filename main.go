@@ -20,6 +20,8 @@ import (
 	"github.com/sjqzhang/requests"
 	"github.com/spf13/viper"
 	"gopkg.in/natefinch/lumberjack.v2"
+	"os/signal"
+	"syscall"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"gopkg.in/yaml.v3"
@@ -59,6 +61,8 @@ type Response struct {
 
 type Server struct {
 	router *gin.Engine
+	*http.Server
+	sigChan chan os.Signal
 }
 
 func response(code int, data interface{}, msg string) []byte {
@@ -514,6 +518,53 @@ func InitServer() {
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
 
+	InitRouter(router, routerGroup)
+
+	server = &Server{
+		router: router,
+		Server: &http.Server{
+			Addr:    fmt.Sprintf(":%v", config.Server.Port),
+			Handler: router,
+		},
+		sigChan: make(chan os.Signal, 1),
+	}
+
+	signal.Notify(server.sigChan, syscall.SIGHUP)
+
+	go server.ListenAndServe()
+
+	// 监听重载信号
+	go func() {
+		for {
+			sig := <-server.sigChan
+			if sig == syscall.SIGHUP {
+				log.Println("Received reload signal. Reloading...")
+				server.Reload(server, router)
+				log.Println("Reload completed.")
+			}
+			if sig == syscall.SIGINT || sig == syscall.SIGTERM {
+				if config.Server.Debug {
+					os.Exit(0)
+				}
+			}
+		}
+	}()
+
+	// 等待中断信号
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(server.sigChan, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, syscall.SIGINT, syscall.SIGHUP)
+	<-signalChan
+
+	// 关闭 HTTP 服务器
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatal("Server shutdown:", err)
+	}
+	log.Println("Server exiting")
+}
+
+func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup) {
 	if config.Server.Prefix != "" && config.Server.Prefix != "/" {
 		router.GET("/", func(c *gin.Context) {
 			body, err := ioutil.ReadFile("home.html")
@@ -540,6 +591,21 @@ func InitServer() {
 		go readMessages(con)
 		go writeMessages(con)
 	})
+
+	//router.GET("/_reload", func(c *gin.Context) {
+	//
+	//	//ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	//	//defer cancel()
+	//	//if err := server.Shutdown(ctx); err != nil {
+	//	//	logger.Println("(WARNING)Server shutdown:", err)
+	//	//
+	//	//}
+	//	//go server.Shutdown(context.Background())
+	//
+	//	server.sigChan <- syscall.SIGHUP
+	//
+	//	return
+	//})
 
 	routerGroup.POST("/api", server.HandlerWebSocketResponse)
 	var middlewares []gin.HandlerFunc
@@ -596,10 +662,6 @@ func InitServer() {
 			panic(msg)
 		}
 		router.Any(prefix+"/*path", middlewares...)
-	}
-
-	server = &Server{
-		router: router,
 	}
 }
 
@@ -1183,6 +1245,31 @@ func (s *Server) Run() {
 
 }
 
+func (s *Server) Reload(server *Server, router *gin.Engine) {
+	InitConfig()
+	// 创建一个新的 Gin 引擎实例
+
+	server.Close()
+
+	newEngine := gin.Default()
+	routerGroup := newEngine.Group(config.Server.Prefix)
+	server.router = newEngine
+	InitRouter(newEngine, routerGroup)
+	server.Server = &http.Server{
+		Addr:    fmt.Sprintf(":%v", config.Server.Port),
+		Handler: newEngine,
+	}
+	go func() {
+
+		if err := server.ListenAndServe(); err != nil {
+			logger.Println(err)
+
+		}
+		time.Sleep(time.Millisecond * 100)
+
+	}()
+}
+
 func main() {
 	InitDB()
 	InitRedis()
@@ -1190,5 +1277,4 @@ func main() {
 	InitCasbin()
 	InitJwt()
 	InitServer()
-	server.Run()
 }
