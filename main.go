@@ -898,8 +898,8 @@ func (h *hub) Run() {
 	for {
 		runtime.ReadMemStats(&memStats)
 		msg := fmt.Sprintf("Goroutines:%v,Cardinality:%v,Memory:%v", runtime.NumGoroutine(), h.conns.Cardinality(), memStats.Alloc/1024)
-		fmt.Println(msg)
 		if config.Server.Debug {
+			fmt.Println(msg)
 			logger.Println(msg)
 		}
 		time.Sleep(time.Second)

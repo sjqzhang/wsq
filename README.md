@@ -43,3 +43,7 @@
 }}
 ```
 
+### reload proxy
+```json
+kill -HUP pid
+```
