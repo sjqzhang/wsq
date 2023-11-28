@@ -1,101 +1,127 @@
 #! -*- encoding: utf-8 -*-
-from flask import Flask, request,g,jsonify
-from casbin import Enforcer
-from flask_jwt import JWT, jwt_required, current_identity
-from werkzeug.security import safe_str_cmp
-from functools import wraps
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timedelta
-from flask import Blueprint
+import json
 
-blueprint = Blueprint('ws',__name__,url_prefix='/ws',)
 app = Flask(__name__,instance_path='/tmp')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
+db = SQLAlchemy(app)
 
-app.config['SECRET_KEY'] = 'supersecretkey'
-app.config['JWT_EXPIRATION_DELTA']=timedelta(days=365*10)
+class NocIncident(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    incident_id = db.Column(db.String(255))
+    title = db.Column(db.String(255))
+    start_time = db.Column(db.Integer)
+    end_time = db.Column(db.Integer)
+    duration = db.Column(db.Integer)
+    escalation_time = db.Column(db.Integer)
+    region = db.Column(db.JSON)
+    product_line = db.Column(db.String(255))
+    lvl2_team = db.Column(db.String(255))
+    lvl3_team = db.Column(db.String(255))
+    metric = db.Column(db.String(255))
+    record = db.Column(db.JSON)
+    service_cmdb_name = db.Column(db.String(255))
+    operator = db.Column(db.String(255))
+    report_url = db.Column(db.String(255))
+    group_name = db.Column(db.String(255))
 
-# 加载Casbin的model和policy
-enforcer = Enforcer("model.conf", "policy.csv")
+class Alert(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.String(255))
+    event_status = db.Column(db.String(255))
+    message = db.Column(db.String(255))
+    raw_message = db.Column(db.JSON)
+    start_time = db.Column(db.Integer)
+    end_time = db.Column(db.Integer)
 
-# 加载用户文件
-users = {}
-with open("user.txt") as f:
-    for line in f:
-        username, password = line.strip().split(",")
-        users[username] = password
+@app.route('/ws/alert', methods=['GET'])
+def get_alerts():
+    start_time = request.args.get('start_time')
+    end_time = request.args.get('end_time')
+    group_id = request.args.get('group_id')
 
-# 用户认证回调函数
-class User(object):
-    def __init__(self, id):
-        self.id = id
+    group_where = ""
+    if group_id:
+        group_where = f"AND (json_extract(raw_message, '$.group_ids') LIKE '[{group_id},%' OR json_extract(raw_message, '$.group_ids') LIKE '%,{group_id},%' OR json_extract(raw_message, '$.group_ids') LIKE '%,{group_id}]' OR json_extract(raw_message, '$.group_ids') LIKE '[{group_id}]')"
 
-def authenticate(username, password):
-    if username in users and safe_str_cmp(users.get(username).encode('utf-8'), password.encode('utf-8')):
-        return User(username)
+    if not start_time:
+        today = datetime.utcnow()
+        today_start = today - timedelta(hours=24)
+        query = db.session.query(Alert).filter(Alert.start_time >= today_start.timestamp(), Alert.start_time <= today.timestamp(), Alert.event_status == 'firing')
+        if group_where:
+            query = query.filter(group_where)
+        incidents = query.all()
+    else:
+        if not end_time:
+            end_time = start_time
+        query = db.session.query(Alert).filter(Alert.start_time >= start_time, Alert.start_time <= end_time, Alert.event_status == 'firing')
+        if group_where:
+            query = query.filter(group_where)
+        incidents = query.all()
 
-# 根据用户ID获取用户对象
-def identity(payload):
-    user_id = payload['identity']
-    return user_id
+    result = []
+    for incident in incidents:
+        result.append({
+            'id': incident.id,
+            'event_id': incident.event_id,
+            'event_status': incident.event_status,
+            'message': incident.message,
+            'raw_message': incident.raw_message,
+            'start_time': incident.start_time,
+            'end_time': incident.end_time
+        })
 
-jwt = JWT(app, authenticate, identity)
+    return jsonify({
+        'Code': 0,
+        'Data': result,
+        'Msg': 'ok'
+    })
 
-# 统一的返回处理装饰器
-def response_handler(f):
-    def wrapper(*args, **kwargs):
-        try:
-            # 执行路由处理函数
-            response = f(*args, **kwargs)
-            # 返回JSON响应
-            return jsonify({'data': response, 'error': None}), 200
-        except Exception as e:
-            # 处理异常情况
-            return jsonify({'data': None, 'error': str(e)}), 500
-    return wrapper
+@app.route('/ws/noc_incident', methods=['GET'])
+def get_noc_incidents():
+    start_time = request.args.get('start_time')
+    end_time = request.args.get('end_time')
 
-def authorize():
+    if not start_time:
+        today = datetime.utcnow()
+        today_start = today - timedelta(hours=24)
+        incidents = db.session.query(NocIncident).filter(NocIncident.start_time >= today_start.timestamp(), NocIncident.start_time < today.timestamp()).all()
+    else:
+        if not end_time:
+            end_time = start_time
+        incidents = db.session.query(NocIncident).filter(NocIncident.start_time >= start_time, NocIncident.start_time < end_time).all()
 
-    def decorator(func):
-        @jwt_required()
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # 获取当前用户的角色或用户名，根据实际情况进行修改
+    result = []
+    for incident in incidents:
+        result.append({
+            'id': incident.id,
+            'incident_id': incident.incident_id,
+            'title': incident.title,
+            'start_time': incident.start_time,
+            'end_time': incident.end_time,
+            'duration': incident.duration,
+            'escalation_time': incident.escalation_time,
+            'region': json.loads(incident.region),
+            'product_line': incident.product_line,
+            'lvl2_team': incident.lvl2_team,
+            'lvl3_team': incident.lvl3_team,
+            'metric': incident.metric,
+            'record': json.loads(incident.record),
+            'service_cmdb_name': incident.service_cmdb_name,
+            'operator': incident.operator,
+            'report_url': incident.report_url,
+            'group_name': incident.group_name
+        })
 
-            username = current_identity
-            # 检查当前用户是否具有所需权限
-            if enforcer.enforce(username, request.path, request.method):
-                # 执行原始函数
-                return func(*args, **kwargs)
-            else:
-                # 返回未授权的错误消息或执行其他授权失败的操作
-                return "Unauthorized", 401
-
-        return wrapper
-
-    return decorator
-
-# 定义受保护的路由
-@app.route('/protected')
-@authorize()
-def protected():
-    return "This is a protected route"
-
-@app.route('/api/user')
-@authorize()
-def api_user():
-    return "This is an API route"
-
-#blueprint example
-
-@blueprint.route('/')
-def index():
-    return 'index'
-
-
-@blueprint.route('/protected')
-@authorize()
-def blueprint_protected():
-    return 'protected'
+    return jsonify({
+        'Code': 0,
+        'Data': result,
+        'Msg': 'ok'
+    })
 
 if __name__ == '__main__':
-    app.register_blueprint(blueprint)
-    app.run(debug=True, port=5001)
+    with app.app_context():
+        db.create_all()
+    app.run(port=8867)
