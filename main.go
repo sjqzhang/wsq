@@ -148,6 +148,7 @@ type Config struct {
 		Addr     string `mapstructure:"addr" yaml:"addr"`
 		Password string `mapstructure:"password" yaml:"password"`
 		DB       int    `mapstructure:"db" yaml:"db"`
+		Enable   bool   `mapstructure:"enable" yaml:"enable"`
 	} `yaml:"embedRedis"`
 	Database struct {
 		DbType string `mapstructure:"db_type" yaml:"db_type"`
@@ -208,10 +209,12 @@ func InitConfig() {
 					Addr     string `mapstructure:"addr" yaml:"addr"`
 					Password string `mapstructure:"password" yaml:"password"`
 					DB       int    `mapstructure:"db" yaml:"db"`
+					Enable   bool   `mapstructure:"enable" yaml:"enable"`
 				}{
 					Addr:     ":6380",
 					Password: "",
 					DB:       0,
+					Enable:   true,
 				},
 				Database: struct {
 					DbType string `mapstructure:"db_type" yaml:"db_type"`
@@ -666,6 +669,10 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup) {
 }
 
 func InitRedis() {
+
+	if !config.EmbedRedis.Enable {
+		return
+	}
 
 	rs = miniredis.NewMiniRedis()
 
