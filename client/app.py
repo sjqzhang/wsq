@@ -4,6 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 import json
 import time
 
+
 app = Flask(__name__,instance_path='/tmp')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
 
@@ -33,6 +34,26 @@ class NocIncident(db.Model):
     operator = db.Column(db.String(255))
     report_url = db.Column(db.String(255))
     group_name = db.Column(db.String(255))
+    def serialize(self):
+        return {
+            'id': self.id,
+            'incident_id': self.incident_id,
+            'title': self.title,
+            'start_time': self.start_time,
+            'end_time': self.end_time,
+            'duration': self.duration,
+            'escalation_time': self.escalation_time,
+            'region': self.region,
+            'product_line': self.product_line,
+            'lvl2_team': self.lvl2_team,
+            'lvl3_team': self.lvl3_team,
+            'metric': self.metric,
+            'record': self.record,
+            'service_cmdb_name': self.service_cmdb_name,
+            'operator': self.operator,
+            'report_url': self.report_url,
+            'group_name': self.group_name
+        }
 
 
 class Alert(db.Model):
@@ -44,6 +65,16 @@ class Alert(db.Model):
     raw_message = db.Column(db.JSON)
     start_time = db.Column(db.Integer)
     end_time = db.Column(db.Integer)
+    def serialize(self):
+        return {
+            'id': self.id,
+            'event_id': self.event_id,
+            'event_status': self.event_status,
+            'message': self.message,
+            'raw_message': self.raw_message,
+            'start_time': self.start_time,
+            'end_time': self.end_time
+        }
 
 
 @app.route('/')
