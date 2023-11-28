@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 import json
 import time
+import requests
 
 
 app = Flask(__name__,instance_path='/tmp')
@@ -14,6 +15,14 @@ logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 app.config['SQLALCHEMY_ECHO'] = True
 app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
 db = SQLAlchemy(app)
+
+class Subscription:
+    def __init__(self, action, topic, id, message, header):
+        self.action = action
+        self.topic = topic
+        self.id = id
+        self.message = message
+        self.header = header
 
 class NocIncident(db.Model):
     __tablename__ = 'noc_incidents'
@@ -151,6 +160,8 @@ def create_alert():
         incident.end_time = data['end_time']
     db.session.commit()
 
+    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='alert',message=data).__dict__)
+
     return jsonify({'retcode': 0, 'data': data, 'message': 'ok'})
 
 
@@ -184,6 +195,9 @@ def create_noc_incident():
         incident.report_url = data['report_url']
         incident.group_name = data['group_name']
     db.session.commit()
+
+
+    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='noc_incident',message=data).__dict__)
 
     return jsonify({'retcode': 0, 'data': data, 'message': 'ok'})
 
