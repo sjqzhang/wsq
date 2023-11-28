@@ -1,14 +1,21 @@
 #! -*- encoding: utf-8 -*-
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, timedelta
 import json
+import time
 
 app = Flask(__name__,instance_path='/tmp')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
+
+import logging
+logging.basicConfig()
+logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+app.config['SQLALCHEMY_ECHO'] = True
+app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
 db = SQLAlchemy(app)
 
 class NocIncident(db.Model):
+    __tablename__ = 'noc_incidents'
     id = db.Column(db.Integer, primary_key=True)
     incident_id = db.Column(db.String(255))
     title = db.Column(db.String(255))
@@ -27,7 +34,9 @@ class NocIncident(db.Model):
     report_url = db.Column(db.String(255))
     group_name = db.Column(db.String(255))
 
+
 class Alert(db.Model):
+    __tablename__ = 'alerts'
     id = db.Column(db.Integer, primary_key=True)
     event_id = db.Column(db.String(255))
     event_status = db.Column(db.String(255))
@@ -35,6 +44,13 @@ class Alert(db.Model):
     raw_message = db.Column(db.JSON)
     start_time = db.Column(db.Integer)
     end_time = db.Column(db.Integer)
+
+
+@app.route('/')
+def home():
+    with open('examples/message/home.html', 'r') as file:
+        return file.read()
+
 
 @app.route('/ws/alert', methods=['GET'])
 def get_alerts():
@@ -44,40 +60,32 @@ def get_alerts():
 
     group_where = ""
     if group_id:
-        group_where = f"AND (json_extract(raw_message, '$.group_ids') LIKE '[{group_id},%' OR json_extract(raw_message, '$.group_ids') LIKE '%,{group_id},%' OR json_extract(raw_message, '$.group_ids') LIKE '%,{group_id}]' OR json_extract(raw_message, '$.group_ids') LIKE '[{group_id}]')"
+        group_where = f"AND (json_extract(raw_message, '$.group_ids') LIKE '[{group_id},%' " \
+                      f"OR json_extract(raw_message, '$.group_ids') LIKE '%,{group_id},%' " \
+                      f"OR json_extract(raw_message, '$.group_ids') LIKE '%,{group_id}]' " \
+                      f"OR json_extract(raw_message, '$.group_ids') LIKE '[{group_id}]')"
 
     if not start_time:
-        today = datetime.utcnow()
-        today_start = today - timedelta(hours=24)
-        query = db.session.query(Alert).filter(Alert.start_time >= today_start.timestamp(), Alert.start_time <= today.timestamp(), Alert.event_status == 'firing')
+        today = int(time.time())
+        today_start = today - (24 * 60 * 60)
+        query = Alert.query.filter(Alert.start_time >= today_start, Alert.start_time <= today)
         if group_where:
-            query = query.filter(group_where)
+            query = query.filter(Alert.event_status == 'firing').filter(group_where)
+        else:
+            query = query.filter(Alert.event_status == 'firing')
         incidents = query.all()
     else:
         if not end_time:
             end_time = start_time
-        query = db.session.query(Alert).filter(Alert.start_time >= start_time, Alert.start_time <= end_time, Alert.event_status == 'firing')
+        query = Alert.query.filter(Alert.start_time >= start_time, Alert.start_time <= end_time)
         if group_where:
-            query = query.filter(group_where)
+            query = query.filter(Alert.event_status == 'firing').filter(group_where)
+        else:
+            query = query.filter(Alert.event_status == 'firing')
         incidents = query.all()
 
-    result = []
-    for incident in incidents:
-        result.append({
-            'id': incident.id,
-            'event_id': incident.event_id,
-            'event_status': incident.event_status,
-            'message': incident.message,
-            'raw_message': incident.raw_message,
-            'start_time': incident.start_time,
-            'end_time': incident.end_time
-        })
+    return jsonify({'retcode': 0, 'data': [incident.serialize() for incident in incidents], 'message': 'ok'})
 
-    return jsonify({
-        'Code': 0,
-        'Data': result,
-        'Msg': 'ok'
-    })
 
 @app.route('/ws/noc_incident', methods=['GET'])
 def get_noc_incidents():
@@ -85,43 +93,71 @@ def get_noc_incidents():
     end_time = request.args.get('end_time')
 
     if not start_time:
-        today = datetime.utcnow()
-        today_start = today - timedelta(hours=24)
-        incidents = db.session.query(NocIncident).filter(NocIncident.start_time >= today_start.timestamp(), NocIncident.start_time < today.timestamp()).all()
+        today = int(time.time())
+        today_start = today - (24 * 60 * 60)
+        incidents = NocIncident.query.filter(NocIncident.start_time >= today_start, NocIncident.start_time < today).all()
     else:
         if not end_time:
             end_time = start_time
-        incidents = db.session.query(NocIncident).filter(NocIncident.start_time >= start_time, NocIncident.start_time < end_time).all()
+        incidents = NocIncident.query.filter(NocIncident.start_time >= start_time, NocIncident.start_time < end_time).all()
 
-    result = []
-    for incident in incidents:
-        result.append({
-            'id': incident.id,
-            'incident_id': incident.incident_id,
-            'title': incident.title,
-            'start_time': incident.start_time,
-            'end_time': incident.end_time,
-            'duration': incident.duration,
-            'escalation_time': incident.escalation_time,
-            'region': json.loads(incident.region),
-            'product_line': incident.product_line,
-            'lvl2_team': incident.lvl2_team,
-            'lvl3_team': incident.lvl3_team,
-            'metric': incident.metric,
-            'record': json.loads(incident.record),
-            'service_cmdb_name': incident.service_cmdb_name,
-            'operator': incident.operator,
-            'report_url': incident.report_url,
-            'group_name': incident.group_name
-        })
+    return jsonify({'retcode': 0, 'data': [incident.serialize() for incident in incidents], 'message': 'ok'})
 
-    return jsonify({
-        'Code': 0,
-        'Data': result,
-        'Msg': 'ok'
-    })
+
+@app.route('/ws/alert', methods=['POST'])
+def create_alert():
+    data = request.get_json()
+    incident = Alert.query.filter_by(event_id=data['event_id']).first()
+    if incident is None:
+        incident = Alert(event_id=data['event_id'], event_status=data['event_status'], message=data['message'],
+                         raw_message=data['raw_message'], start_time=data['start_time'], end_time=data['end_time'])
+        db.session.add(incident)
+    else:
+        incident.event_status = data['event_status']
+        incident.message = data['message']
+        incident.raw_message = data['raw_message']
+        incident.start_time = data['start_time']
+        incident.end_time = data['end_time']
+    db.session.commit()
+
+    return jsonify({'retcode': 0, 'data': data, 'message': 'ok'})
+
+
+@app.route('/ws/noc_incident', methods=['POST'])
+def create_noc_incident():
+    data = request.get_json()
+    incident = NocIncident.query.filter_by(incident_id=data['incident_id']).first()
+    if incident is None:
+        incident = NocIncident(incident_id=data['incident_id'], title=data['title'], start_time=data['start_time'],
+                               end_time=data['end_time'], duration=data['duration'],
+                               escalation_time=data['escalation_time'], region=data['region'],
+                               product_line=data['product_line'], lvl2_team=data['lvl2_team'],
+                               lvl3_team=data['lvl3_team'], metric=data['metric'], record=data['record'],
+                               service_cmdb_name=data['service_cmdb_name'], operator=data['operator'],
+                               report_url=data['report_url'], group_name=data['group_name'])
+        db.session.add(incident)
+    else:
+        incident.title = data['title']
+        incident.start_time = data['start_time']
+        incident.end_time = data['end_time']
+        incident.duration = data['duration']
+        incident.escalation_time = data['escalation_time']
+        incident.region = data['region']
+        incident.product_line = data['product_line']
+        incident.lvl2_team = data['lvl2_team']
+        incident.lvl3_team = data['lvl3_team']
+        incident.metric = data['metric']
+        incident.record = data['record']
+        incident.service_cmdb_name = data['service_cmdb_name']
+        incident.operator = data['operator']
+        incident.report_url = data['report_url']
+        incident.group_name = data['group_name']
+    db.session.commit()
+
+    return jsonify({'retcode': 0, 'data': data, 'message': 'ok'})
+
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(port=8867)
+    # with app.app_context():
+    #     db.create_all()
+    app.run(host='0.0.0.0', port=8867,debug=True)
