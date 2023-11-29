@@ -729,7 +729,7 @@ func InitCasbin() {
 		}
 
 		// 检查用户的权限
-		if ok, err := e.Enforce(username, c.FullPath(), c.Request.Method); !ok || err != nil {
+		if ok, err := e.Enforce(username, c.Request.RequestURI, c.Request.Method); !ok || err != nil {
 			// 如果用户没有访问权限，返回错误信息
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "You don't have permission to access this resource",
