@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Configx Tools</title>
+    <script src="https://cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script>
+
+</head>
+<body>
+
+<div id="app">
+
+
+    <select id="tools">
+        <option value="add_admin">增加Admin</option>
+        <option value="sync_namespace">同步Namespace</option>
+        <option value="sync_namespace">同步Apollo权限</option>
+    </select>
+    <div id="left">
+        <textarea id="input" rows="30" cols="200"></textarea>
+    </div>
+
+    <button id="btn">提交</button>
+
+
+</div>
+
+
+<script>
+
+    var tools_map = {
+        add_admin: `{
+          "appid":"configx",
+          "admin":"junqiang.zhang@shopee.com"
+        }`,
+        sync_namespace: `{
+          "appid":"configx"
+        }`,
+        sync_permission: `{
+          "appid":"configx"
+        }`
+
+
+    }
+
+    $("#input").val(tools_map["add_admin"])
+
+    $("#tools").change(function () {
+        $("#input").val(tools_map[$(this).val()]);
+
+    })
+
+    $.ajaxSetup({
+        headers: {
+            'content-Type': 'application/json',
+        }
+    });
+
+
+    $("#btn").click(function () {
+
+        switch ($("#tools").val()) {
+            case "add_admin":
+                $.post('/api/ws/configx/add_admin', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                    console.log(data)
+                })
+                break;
+            case "sync_namespace":
+                $.post('/api/ws/configx/sync_namespace', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                    console.log(data)
+                })
+                break;
+            case "sync_permission":
+                $.post('/api/ws/configx/sync_permission', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                    console.log(data)
+                })
+                break;
+        }
+    })
+
+</script>
+
+</body>
+</html>

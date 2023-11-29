@@ -4,6 +4,15 @@ from flask_sqlalchemy import SQLAlchemy
 import json
 import time
 import requests
+import sys
+import io
+
+# 将sys.stdout设置为UTF-8编码的文本流
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+# 将sys.stderr设置为UTF-8编码的文本流
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 
 
 app = Flask(__name__,instance_path='/tmp')
@@ -115,7 +124,7 @@ def configx_sync_permission():
 
 @app.route('/ws/configx')
 def home():
-    with open('configx_tools.html', 'r') as file:
+    with open('configx_tools.html', 'rb') as file:
         return file.read()
 
 
