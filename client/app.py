@@ -96,7 +96,6 @@ class Alert(db.Model):
         }
 
 
-
 @app.route('/ws/configx/add_admin', methods=['POST'])
 def configx_add_admin():
     from configx_add_admin import add_user_role
@@ -198,9 +197,9 @@ def create_alert():
         incident.end_time = data['end_time']
     db.session.commit()
 
-    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='alert',message=data).__dict__)
+    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='alert',message=incident).__dict__)
 
-    return jsonify({'retcode': 0, 'data': data, 'message': 'ok'})
+    return jsonify({'retcode': 0, 'data': incident, 'message': 'ok'})
 
 
 @app.route('/ws/noc_incident', methods=['POST'])
@@ -232,12 +231,13 @@ def create_noc_incident():
         incident.operator = data['operator']
         incident.report_url = data['report_url']
         incident.group_name = data['group_name']
+
     db.session.commit()
 
 
-    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='noc_incident',message=data).__dict__)
+    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='noc_incident',message=incident).__dict__)
 
-    return jsonify({'retcode': 0, 'data': data, 'message': 'ok'})
+    return jsonify({'retcode': 0, 'data': incident, 'message': 'ok'})
 
 
 if __name__ == '__main__':
