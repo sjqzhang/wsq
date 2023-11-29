@@ -1168,6 +1168,13 @@ func Logger() gin.HandlerFunc {
 		// 处理请求
 		c.Next()
 
+		username := "anonymous"
+
+		if user, ok := c.Get(authMiddleware.IdentityKey); ok {
+			username = user.(*User).Name
+		}
+
+
 		// 结束时间
 		end := time.Now()
 
@@ -1190,8 +1197,9 @@ func Logger() gin.HandlerFunc {
 		latency := end.Sub(start)
 
 		// 构建日志条目
-		logEntry := fmt.Sprintf("%s - - [%s] \"%s %s\" %d %d %s\n",
+		logEntry := fmt.Sprintf("%s -[%s]- [%s] \"%s %s\" %d %d %s\n",
 			clientIP,
+			username,
 			end.Format("2006-01-02:15:04:05 -0700"),
 			method,
 			path,
