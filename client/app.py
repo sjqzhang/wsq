@@ -7,7 +7,8 @@ import requests
 
 
 app = Flask(__name__,instance_path='/tmp')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
+app.config['JSON_AS_ASCII'] = False
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////home/jq/scripts/test.db'
 
 import logging
 logging.basicConfig()
@@ -17,7 +18,7 @@ app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
 db = SQLAlchemy(app)
 
 class Subscription:
-    def __init__(self, action, topic, id, message, header):
+    def __init__(self, message='',action='', topic='', id='' , header={}):
         self.action = action
         self.topic = topic
         self.id = id
@@ -86,10 +87,38 @@ class Alert(db.Model):
         }
 
 
-@app.route('/')
+
+@app.route('/ws/configx/add_admin', methods=['POST'])
+def configx_add_admin():
+    from configx_add_admin import add_user_role
+    data = request.get_json()
+    add_user_role(data['admin'], data['appid'])
+    return data
+
+
+@app.route('/ws/configx/sync_namespace', methods=['POST'])
+def configx_sync_namespace():
+    from configx_add_namespace import sync
+    data = request.get_json()
+    sync(data['appid'])
+    return data
+
+@app.route('/ws/configx/sync_permission', methods=['POST'])
+def configx_sync_permission():
+    from configx_add_namespace import sync_permission
+    data = request.get_json()
+    sync_permission(data['appid'])
+    return data
+
+
+
+
+@app.route('/ws/configx')
 def home():
-    with open('examples/message/home.html', 'r') as file:
+    with open('configx_tools.html', 'r') as file:
         return file.read()
+
+
 
 
 @app.route('/ws/alert', methods=['GET'])
