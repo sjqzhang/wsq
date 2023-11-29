@@ -609,6 +609,9 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup) {
 	//
 	//	return
 	//})
+	routerGroup.POST("/login", authMiddleware.LoginHandler)
+	routerGroup.POST("/refresh_token", authMiddleware.RefreshHandler)
+	routerGroup.POST("/logout", authMiddleware.LogoutHandler)
 
 	routerGroup.POST("/api", server.HandlerWebSocketResponse)
 	var middlewares []gin.HandlerFunc
