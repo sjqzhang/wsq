@@ -2,7 +2,6 @@
 from flask import Flask, request,g,jsonify
 from casbin import Enforcer
 from flask_jwt import JWT, jwt_required, current_identity
-from werkzeug.security import safe_str_cmp
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import Blueprint
@@ -29,7 +28,7 @@ class User(object):
         self.id = id
 
 def authenticate(username, password):
-    if username in users and safe_str_cmp(users.get(username).encode('utf-8'), password.encode('utf-8')):
+    if username in users and users.get(username).encode('utf-8')==password.encode('utf-8'):
         return User(username)
 
 # 根据用户ID获取用户对象
