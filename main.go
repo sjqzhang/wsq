@@ -1270,6 +1270,7 @@ func (s *Server) Reload(server *Server, router *gin.Engine) {
 	server.Close()
 
 	newEngine := gin.Default()
+	newEngine.Use(Logger())
 	routerGroup := newEngine.Group(config.Server.Prefix)
 	server.router = newEngine
 	InitRouter(newEngine, routerGroup)
