@@ -197,9 +197,9 @@ def create_alert():
         incident.end_time = data['end_time']
     db.session.commit()
 
-    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='alert',message=incident).__dict__)
+    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='alert',message=incident.serialize()).__dict__)
 
-    return jsonify({'retcode': 0, 'data': incident, 'message': 'ok'})
+    return jsonify({'retcode': 0, 'data': incident.serialize(), 'message': 'ok'})
 
 
 @app.route('/ws/noc_incident', methods=['POST'])
@@ -235,9 +235,9 @@ def create_noc_incident():
     db.session.commit()
 
 
-    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='noc_incident',message=incident).__dict__)
+    requests.post('http://127.0.0.1:8866/ws/api', json=Subscription(topic='noc_incident',message=incident.serialize()).__dict__)
 
-    return jsonify({'retcode': 0, 'data': incident, 'message': 'ok'})
+    return jsonify({'retcode': 0, 'data': incident.serialize(), 'message': 'ok'})
 
 
 if __name__ == '__main__':
