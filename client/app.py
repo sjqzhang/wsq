@@ -118,6 +118,12 @@ def configx_sync_permission():
     sync_permission(data['appid'])
     return data
 
+@app.route('/ws/configx/update_operation_by_jira', methods=['POST'])
+def configx_update_operation_by_jira():
+    from configx_connection import update_operation_by_jira
+    data = request.get_json()
+    update_operation_by_jira(data['jira_key'])
+    return data
 
 
 

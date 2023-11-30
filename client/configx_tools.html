@@ -16,6 +16,7 @@
         <option value="add_admin">增加Admin</option>
         <option value="sync_namespace">同步Namespace</option>
         <option value="sync_namespace">同步Apollo权限</option>
+        <option value="update_operation_by_jira">通过Jira更新Operation状态</option>
     </select>
     <div id="left">
         <textarea id="input" rows="30" cols="200"></textarea>
@@ -39,6 +40,9 @@
         }`,
         sync_permission: `{
           "appid":"configx"
+        }`,
+        update_operation_by_jira: `{
+          "jira_key":"JIRA-12345"
         }`
 
 
@@ -76,6 +80,10 @@
                     console.log(data)
                 })
                 break;
+            case "update_operation_by_jira":
+                $.post('/api/ws/configx/update_operation_by_jira', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                    console.log(data)
+                })
         }
     })
 
