@@ -122,7 +122,7 @@ def configx_sync_permission():
 def configx_update_operation_by_jira():
     from configx_connection import update_operation_by_jira
     data = request.get_json()
-    update_operation_by_jira(data['jira_key'])
+    update_operation_by_jira(data['jira_key'], data['operation_status'])
     return data
 
 
