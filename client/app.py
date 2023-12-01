@@ -89,11 +89,18 @@ def api_user():
 def index():
     return 'index'
 
+@app.route('/v2/hello')
+def hello():
+    return 'index hello'
+
 
 @blueprint.route('/protected')
 @authorize()
 def blueprint_protected():
     return 'protected'
+
+
+
 
 if __name__ == '__main__':
     app.register_blueprint(blueprint)
