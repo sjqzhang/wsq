@@ -169,11 +169,18 @@ type Config struct {
 			Username string `yaml:"username" mapstructure:"username"`
 			Password string `yaml:"password" mapstructure:"password"`
 		} `yaml:"user"`
+		Header map[string]string `yaml:"header" mapstructure:"header"`
 	} `yaml:"forwardConfig"`
 	Jwt struct {
-		SigningKey string `mapstructure:"signing_key" yaml:"signing_key"`
-		Timeout    int    `mapstructure:"timeout" yaml:"timeout"`
-		Enable     bool   `mapstructure:"enable" yaml:"enable"`
+		Algorithm     string `mapstructure:"algorithm" yaml:"algorithm"`
+		SigningKey    string `mapstructure:"signing_key" yaml:"signing_key"`
+		Timeout       int    `mapstructure:"timeout" yaml:"timeout"`
+		CookieDomain  string `mapstructure:"cookie_domain" yaml:"cookie_domain"`
+		CookieName    string `mapstructure:"cookie_name" yaml:"cookie_name"`
+		SendCookie    bool   `mapstructure:"send_cookie" yaml:"send_cookie"`
+		TokenHeadName string `mapstructure:"token_head_name" yaml:"token_head_name"`
+		TokenLookup   string `mapstructure:"token_lookup" yaml:"token_lookup"`
+		Enable        bool   `mapstructure:"enable" yaml:"enable"`
 	} `yaml:"jwt"`
 	Casbin struct {
 		ModelPath  string            `mapstructure:"model_path" yaml:"model_path"`
@@ -190,6 +197,8 @@ func InitConfig() {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./conf")
+	viper.SetConfigFile("./conf/config.yaml")
+
 
 	// 读取配置文件
 	err := viper.ReadInConfig()
@@ -245,6 +254,7 @@ func InitConfig() {
 						Username string `yaml:"username" mapstructure:"username"`
 						Password string `yaml:"password" mapstructure:"password"`
 					} `yaml:"user"`
+					Header map[string]string `yaml:"header" mapstructure:"header"`
 				}{
 					{
 						Prefix:      "/v2",
@@ -258,16 +268,29 @@ func InitConfig() {
 							Username: "admin",
 							Password: "admin",
 						},
+						Header: map[string]string{},
 					},
 				},
 				Jwt: struct {
-					SigningKey string `mapstructure:"signing_key" yaml:"signing_key"`
-					Timeout    int    `mapstructure:"timeout" yaml:"timeout"`
-					Enable     bool   `mapstructure:"enable" yaml:"enable"`
+					Algorithm     string `mapstructure:"algorithm" yaml:"algorithm"`
+					SigningKey    string `mapstructure:"signing_key" yaml:"signing_key"`
+					Timeout       int    `mapstructure:"timeout" yaml:"timeout"`
+					CookieDomain  string `mapstructure:"cookie_domain" yaml:"cookie_domain"`
+					CookieName    string `mapstructure:"cookie_name" yaml:"cookie_name"`
+					SendCookie    bool   `mapstructure:"send_cookie" yaml:"send_cookie"`
+					TokenHeadName string `mapstructure:"token_head_name" yaml:"token_head_name"`
+					TokenLookup   string `mapstructure:"token_lookup" yaml:"token_lookup"`
+					Enable        bool   `mapstructure:"enable" yaml:"enable"`
 				}{
-					SigningKey: "hello",
-					Timeout:    3600,
-					Enable:     true,
+					Algorithm:     "HS256",
+					SigningKey:    "hello",
+					Timeout:       3600,
+					CookieDomain:  "",
+					CookieName:    "jwt",
+					TokenLookup:   "header:Authorization",
+					TokenHeadName: "Bearer",
+					SendCookie:    true,
+					Enable:        true,
 				},
 				Casbin: struct {
 					ModelPath  string            `mapstructure:"model_path" yaml:"model_path"`
@@ -409,6 +432,7 @@ func InitJwt() {
 		Timeout:     time.Second * time.Duration(config.Jwt.Timeout),
 		MaxRefresh:  time.Hour,
 		IdentityKey: "id",
+		SendCookie:  config.Jwt.SendCookie,
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			if v, ok := data.(*User); ok {
 				return jwt.MapClaims{
@@ -769,6 +793,7 @@ func init() {
 	//判断conf文件夹是否存在，不存在则创建
 	if _, err := os.Stat("conf"); os.IsNotExist(err) {
 		os.Mkdir("conf", os.ModePerm)
+	}
 		//自动生成model.conf,policy.conf文件
 		model_conf := `[request_definition]
 r = sub, obj, act
@@ -796,10 +821,16 @@ g, admin,admin_role
 g,anonymous,read_role
 `
 		user_txt := `anonymous,anonymous`
-		ioutil.WriteFile("conf/model.conf", []byte(model_conf), 0644)
-		ioutil.WriteFile("conf/policy.csv", []byte(policy_conf), 0644)
-		ioutil.WriteFile("conf/user.txt", []byte(user_txt), 0644)
-	}
+		if _, err := os.Stat("conf/model.conf"); os.IsNotExist(err) {
+			ioutil.WriteFile("conf/model.conf", []byte(model_conf), 0644)
+		}
+		if _, err := os.Stat("conf/policy.csv"); os.IsNotExist(err) {
+			ioutil.WriteFile("conf/policy.csv", []byte(policy_conf), 0644)
+		}
+		if _, err := os.Stat("conf/user.txt"); os.IsNotExist(err) {
+			ioutil.WriteFile("conf/user.txt", []byte(user_txt), 0644)
+		}
+
 
 	//判断log文件夹是否存在，不存在则创建
 	if _, err := os.Stat("log"); os.IsNotExist(err) {
