@@ -67,22 +67,22 @@
 
         switch ($("#tools").val()) {
             case "add_admin":
-                $.post('/api/ws/configx/add_admin', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                $.post('/api/ws/v3/configx/add_admin', JSON.stringify(JSON.parse($("#input").val())), function (data) {
                     console.log(data)
                 })
                 break;
             case "sync_namespace":
-                $.post('/api/ws/configx/sync_namespace', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                $.post('/api/ws/v3/configx/sync_namespace', JSON.stringify(JSON.parse($("#input").val())), function (data) {
                     console.log(data)
                 })
                 break;
             case "sync_permission":
-                $.post('/api/ws/configx/sync_permission', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                $.post('/api/ws/v3/configx/sync_permission', JSON.stringify(JSON.parse($("#input").val())), function (data) {
                     console.log(data)
                 })
                 break;
             case "update_operation_by_jira":
-                $.post('/api/ws/configx/update_operation_by_jira', JSON.stringify(JSON.parse($("#input").val())), function (data) {
+                $.post('/api/ws/v3/configx/update_operation_by_jira', JSON.stringify(JSON.parse($("#input").val())), function (data) {
                     console.log(data)
                 })
         }
