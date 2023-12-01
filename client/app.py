@@ -96,7 +96,7 @@ class Alert(db.Model):
         }
 
 
-@app.route('/ws/v3/configx/add_admin', methods=['POST'])
+@app.route('/configx/add_admin', methods=['POST'])
 def configx_add_admin():
     from configx_add_admin import add_user_role
     data = request.get_json()
@@ -104,21 +104,21 @@ def configx_add_admin():
     return data
 
 
-@app.route('/ws/v3/configx/sync_namespace', methods=['POST'])
+@app.route('/configx/sync_namespace', methods=['POST'])
 def configx_sync_namespace():
     from configx_add_namespace import sync
     data = request.get_json()
     sync(data['appid'])
     return data
 
-@app.route('/ws/v3/configx/sync_permission', methods=['POST'])
+@app.route('/configx/sync_permission', methods=['POST'])
 def configx_sync_permission():
     from configx_add_namespace import sync_permission
     data = request.get_json()
     sync_permission(data['appid'])
     return data
 
-@app.route('/ws/v3/configx/update_operation_by_jira', methods=['POST'])
+@app.route('/configx/update_operation_by_jira', methods=['POST'])
 def configx_update_operation_by_jira():
     from configx_connection import update_operation_by_jira
     data = request.get_json()
@@ -127,7 +127,7 @@ def configx_update_operation_by_jira():
 
 
 
-@app.route('/ws/v3/configx')
+@app.route('/configx')
 def home():
     with open('configx_tools.html', 'rb') as file:
         return file.read()

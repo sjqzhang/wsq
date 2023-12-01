@@ -12,17 +12,21 @@
 <div id="app">
 
 
-    <select id="tools">
+    <select id="tools" style="display:block;clear:both;">
         <option value="add_admin">增加Admin</option>
         <option value="sync_namespace">同步Namespace</option>
         <option value="sync_namespace">同步Apollo权限</option>
         <option value="update_operation_by_jira">通过Jira更新Operation状态</option>
     </select>
-    <div id="left">
-        <textarea id="input" rows="30" cols="200"></textarea>
+    <div id="left" style="float: left">
+        <textarea id="input" rows="30" cols="100"></textarea>
     </div>
 
-    <button id="btn">提交</button>
+    <div id="right" style="float:left">
+        <textarea id="result" rows="30" cols="100"></textarea>
+    </div>
+
+    <button id="btn" style="clear: both;display: block;">提交</button>
 
 
 </div>
@@ -68,22 +72,22 @@
         switch ($("#tools").val()) {
             case "add_admin":
                 $.post('/api/ws/v3/configx/add_admin', JSON.stringify(JSON.parse($("#input").val())), function (data) {
-                    console.log(data)
+                    $("#result").val(JSON.stringify( data))
                 })
                 break;
             case "sync_namespace":
                 $.post('/api/ws/v3/configx/sync_namespace', JSON.stringify(JSON.parse($("#input").val())), function (data) {
-                    console.log(data)
+                    $("#result").val(JSON.stringify( data))
                 })
                 break;
             case "sync_permission":
                 $.post('/api/ws/v3/configx/sync_permission', JSON.stringify(JSON.parse($("#input").val())), function (data) {
-                    console.log(data)
+                    $("#result").val(JSON.stringify( data))
                 })
                 break;
             case "update_operation_by_jira":
                 $.post('/api/ws/v3/configx/update_operation_by_jira', JSON.stringify(JSON.parse($("#input").val())), function (data) {
-                    console.log(data)
+                    $("#result").val(JSON.stringify( data))
                 })
         }
     })
