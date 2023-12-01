@@ -165,6 +165,10 @@ type Config struct {
 		Forward     string `yaml:"forward" mapstructure:"forward"`
 		Default     bool   `yaml:"default" mapstructure:"default"`
 		RequireAuth bool   `yaml:"require_auth" mapstructure:"require_auth"`
+		User        struct {
+			Username string `yaml:"username" mapstructure:"username"`
+			Password string `yaml:"password" mapstructure:"password"`
+		} `yaml:"user"`
 	} `yaml:"forwardConfig"`
 	Jwt struct {
 		SigningKey string `mapstructure:"signing_key" yaml:"signing_key"`
@@ -237,12 +241,23 @@ func InitConfig() {
 					Forward     string `yaml:"forward" mapstructure:"forward"`
 					Default     bool   `yaml:"default" mapstructure:"default"`
 					RequireAuth bool   `yaml:"require_auth" mapstructure:"require_auth"`
+					User        struct {
+						Username string `yaml:"username" mapstructure:"username"`
+						Password string `yaml:"password" mapstructure:"password"`
+					} `yaml:"user"`
 				}{
 					{
 						Prefix:      "/v2",
 						Forward:     "http://127.0.0.1:5000",
 						Default:     true,
 						RequireAuth: false,
+						User: struct {
+							Username string `yaml:"username" mapstructure:"username"`
+							Password string `yaml:"password" mapstructure:"password"`
+						}{
+							Username: "admin",
+							Password: "admin",
+						},
 					},
 				},
 				Jwt: struct {
@@ -637,8 +652,14 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup) {
 
 		var middlewares []gin.HandlerFunc
 		if forwardCfg.RequireAuth {
-			middlewares = append(middlewares, authMiddleware.MiddlewareFunc())
-			middlewares = append(middlewares, casbinMiddle.middleWare)
+			if forwardCfg.User.Username != "" {
+				middlewares = append(middlewares, gin.BasicAuth(gin.Accounts{
+					forwardCfg.User.Username: forwardCfg.User.Password,
+				}))
+			} else {
+				middlewares = append(middlewares, authMiddleware.MiddlewareFunc())
+				middlewares = append(middlewares, casbinMiddle.middleWare)
+			}
 		}
 		middlewares = append(middlewares, func(c *gin.Context) {
 			// 创建反向代理
@@ -1173,7 +1194,6 @@ func Logger() gin.HandlerFunc {
 		if user, ok := c.Get(authMiddleware.IdentityKey); ok {
 			username = user.(*User).Name
 		}
-
 
 		// 结束时间
 		end := time.Now()
