@@ -287,7 +287,7 @@ func InitConfig() {
 					Timeout:       3600,
 					CookieDomain:  "",
 					CookieName:    "jwt",
-					TokenLookup:   "header:Authorization",
+					TokenLookup:   "header: Authorization, query: token, cookie: jwt",
 					TokenHeadName: "Bearer",
 					SendCookie:    true,
 					Enable:        true,
@@ -433,6 +433,10 @@ func InitJwt() {
 		MaxRefresh:  time.Hour,
 		IdentityKey: "id",
 		SendCookie:  config.Jwt.SendCookie,
+		CookieName: config.Jwt.CookieName,
+		CookieDomain: config.Jwt.CookieDomain,
+		TokenLookup: config.Jwt.TokenLookup,
+		TokenHeadName:config.Jwt.TokenHeadName,
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			if v, ok := data.(*User); ok {
 				return jwt.MapClaims{
@@ -486,8 +490,6 @@ func InitJwt() {
 				"data":    nil,
 			})
 		},
-		TokenLookup:   "header: Authorization, query: token, cookie: jwt",
-		TokenHeadName: "Bearer",
 		TimeFunc:      time.Now,
 		LoginResponse: func(c *gin.Context, code int, message string, time time.Time) {
 			c.JSON(code, gin.H{
