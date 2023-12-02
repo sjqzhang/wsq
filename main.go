@@ -175,6 +175,7 @@ type Config struct {
 		Algorithm     string `mapstructure:"algorithm" yaml:"algorithm"`
 		SigningKey    string `mapstructure:"signing_key" yaml:"signing_key"`
 		Timeout       int    `mapstructure:"timeout" yaml:"timeout"`
+		MaxRefresh    int    `yaml:"max_refresh" mapstructure:"max_refresh"`
 		CookieDomain  string `mapstructure:"cookie_domain" yaml:"cookie_domain"`
 		CookieName    string `mapstructure:"cookie_name" yaml:"cookie_name"`
 		SendCookie    bool   `mapstructure:"send_cookie" yaml:"send_cookie"`
@@ -191,24 +192,23 @@ type Config struct {
 	} `yaml:"casbin"`
 }
 
-func InitConfig() {
+func InitConfig() (*Config, error) {
 	// 设置配置文件名称和路径
 
+	var conf Config
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./conf")
 	viper.SetConfigFile("./conf/config.yaml")
 
-
 	// 读取配置文件
 	err := viper.ReadInConfig()
 	if err != nil {
-		fmt.Println("Failed to read configuration file:", err)
 
 		// 检查配置文件是否存在
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
 			// 如果配置文件不存在，则生成模板
-			config = Config{
+			conf = Config{
 				Server: struct {
 					Port   int    `mapstructure:"port" yaml:"port"`
 					Prefix string `mapstructure:"prefix" yaml:"prefix"`
@@ -275,6 +275,7 @@ func InitConfig() {
 					Algorithm     string `mapstructure:"algorithm" yaml:"algorithm"`
 					SigningKey    string `mapstructure:"signing_key" yaml:"signing_key"`
 					Timeout       int    `mapstructure:"timeout" yaml:"timeout"`
+					MaxRefresh    int    `yaml:"max_refresh" mapstructure:"max_refresh"`
 					CookieDomain  string `mapstructure:"cookie_domain" yaml:"cookie_domain"`
 					CookieName    string `mapstructure:"cookie_name" yaml:"cookie_name"`
 					SendCookie    bool   `mapstructure:"send_cookie" yaml:"send_cookie"`
@@ -285,6 +286,7 @@ func InitConfig() {
 					Algorithm:     "HS256",
 					SigningKey:    "hello",
 					Timeout:       3600,
+					MaxRefresh:    0,
 					CookieDomain:  "",
 					CookieName:    "jwt",
 					TokenLookup:   "header: Authorization, query: token, cookie: jwt",
@@ -313,26 +315,23 @@ func InitConfig() {
 			// 将配置数据转换为YAML格式
 			configBytes, err := yaml.Marshal(&config)
 			if err != nil {
-				fmt.Println("Failed to generate configuration template:", err)
-				return
+				return nil, err
 			}
 
 			// 将YAML数据写入配置文件
 			err = os.WriteFile("conf/config.yaml", configBytes, 0644)
 			if err != nil {
-				fmt.Println("Failed to write configuration template:", err)
-				return
+				return nil, err
 			}
-
-			fmt.Println("Configuration file generated:", viper.ConfigFileUsed())
-			fmt.Println("Please configure the file and restart the application.")
-			return
+			return &conf, nil
 		}
+		return nil, err
 	}
-	err = viper.Unmarshal(&config)
+	err = viper.Unmarshal(&conf)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
+	return &conf, nil
 
 }
 
@@ -427,16 +426,16 @@ func InitJwt() {
 
 	// JWT 中间件配置
 	authMiddleware = &jwt.GinJWTMiddleware{
-		Realm:       "test zone",
-		Key:         []byte(config.Jwt.SigningKey),
-		Timeout:     time.Second * time.Duration(config.Jwt.Timeout),
-		MaxRefresh:  time.Hour,
-		IdentityKey: "id",
-		SendCookie:  config.Jwt.SendCookie,
-		CookieName: config.Jwt.CookieName,
-		CookieDomain: config.Jwt.CookieDomain,
-		TokenLookup: config.Jwt.TokenLookup,
-		TokenHeadName:config.Jwt.TokenHeadName,
+		Realm:         "test zone",
+		Key:           []byte(config.Jwt.SigningKey),
+		Timeout:       time.Second * time.Duration(config.Jwt.Timeout),
+		MaxRefresh:    time.Hour * time.Duration(config.Jwt.MaxRefresh),
+		IdentityKey:   "id",
+		SendCookie:    config.Jwt.SendCookie,
+		CookieName:    config.Jwt.CookieName,
+		CookieDomain:  config.Jwt.CookieDomain,
+		TokenLookup:   config.Jwt.TokenLookup,
+		TokenHeadName: config.Jwt.TokenHeadName,
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			if v, ok := data.(*User); ok {
 				return jwt.MapClaims{
@@ -490,7 +489,7 @@ func InitJwt() {
 				"data":    nil,
 			})
 		},
-		TimeFunc:      time.Now,
+		TimeFunc: time.Now,
 		LoginResponse: func(c *gin.Context, code int, message string, time time.Time) {
 			c.JSON(code, gin.H{
 				"code":    code,
@@ -517,10 +516,6 @@ func InitJwt() {
 	if err := authMiddleware.MiddlewareInit(); err != nil {
 		panic(err)
 	}
-
-	//if config.Jwt.Enable {
-	//	router.Use(authMiddleware.MiddlewareFunc())
-	//}
 
 }
 
@@ -562,7 +557,10 @@ func InitServer() {
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
 
-	InitRouter(router, routerGroup)
+	if err:=InitRouter(router, routerGroup,config);err!=nil {
+		panic(err)
+	}
+
 
 	server = &Server{
 		router: router,
@@ -584,7 +582,6 @@ func InitServer() {
 			if sig == syscall.SIGHUP {
 				log.Println("Received reload signal. Reloading...")
 				server.Reload(server, router)
-				log.Println("Reload completed.")
 			}
 			if sig == syscall.SIGINT || sig == syscall.SIGTERM {
 				if config.Server.Debug {
@@ -608,7 +605,15 @@ func InitServer() {
 	log.Println("Server exiting")
 }
 
-func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup) {
+func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup,config Config) (errorInitRouter error) {
+
+	defer func() {
+		if e := recover(); e != nil {
+			errorInitRouter =fmt.Errorf("%v", e)
+			logger.Println(errorInitRouter)
+		}
+	}()
+
 	if config.Server.Prefix != "" && config.Server.Prefix != "/" {
 		router.GET("/", func(c *gin.Context) {
 			body, err := ioutil.ReadFile("home.html")
@@ -640,8 +645,8 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup) {
 	//
 	//	//ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	//	//defer cancel()
-	//	//if err := server.Shutdown(ctx); err != nil {
-	//	//	logger.Println("(WARNING)Server shutdown:", err)
+	//	//if errorInitRouter := server.Shutdown(ctx); errorInitRouter != nil {
+	//	//	logger.Println("(WARNING)Server shutdown:", errorInitRouter)
 	//	//
 	//	//}
 	//	//go server.Shutdown(context.Background())
@@ -716,6 +721,7 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup) {
 		}
 		router.Any(prefix+"/*path", middlewares...)
 	}
+	return errorInitRouter
 }
 
 func InitRedis() {
@@ -796,8 +802,8 @@ func init() {
 	if _, err := os.Stat("conf"); os.IsNotExist(err) {
 		os.Mkdir("conf", os.ModePerm)
 	}
-		//自动生成model.conf,policy.conf文件
-		model_conf := `[request_definition]
+	//自动生成model.conf,policy.conf文件
+	model_conf := `[request_definition]
 r = sub, obj, act
 
 [policy_definition]
@@ -814,7 +820,7 @@ m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
 
 
 `
-		policy_conf := `p, read_role, /protected, GET
+	policy_conf := `p, read_role, /protected, GET
 p, write_role, /api/user,GET
 p, read_role, /ws/alert,GET
 g, admin_role, read_role
@@ -822,17 +828,16 @@ g, admin_role,write_role
 g, admin,admin_role
 g,anonymous,read_role
 `
-		user_txt := `anonymous,anonymous`
-		if _, err := os.Stat("conf/model.conf"); os.IsNotExist(err) {
-			ioutil.WriteFile("conf/model.conf", []byte(model_conf), 0644)
-		}
-		if _, err := os.Stat("conf/policy.csv"); os.IsNotExist(err) {
-			ioutil.WriteFile("conf/policy.csv", []byte(policy_conf), 0644)
-		}
-		if _, err := os.Stat("conf/user.txt"); os.IsNotExist(err) {
-			ioutil.WriteFile("conf/user.txt", []byte(user_txt), 0644)
-		}
-
+	user_txt := `anonymous,anonymous`
+	if _, err := os.Stat("conf/model.conf"); os.IsNotExist(err) {
+		ioutil.WriteFile("conf/model.conf", []byte(model_conf), 0644)
+	}
+	if _, err := os.Stat("conf/policy.csv"); os.IsNotExist(err) {
+		ioutil.WriteFile("conf/policy.csv", []byte(policy_conf), 0644)
+	}
+	if _, err := os.Stat("conf/user.txt"); os.IsNotExist(err) {
+		ioutil.WriteFile("conf/user.txt", []byte(user_txt), 0644)
+	}
 
 	//判断log文件夹是否存在，不存在则创建
 	if _, err := os.Stat("log"); os.IsNotExist(err) {
@@ -850,7 +855,11 @@ g,anonymous,read_role
 	ts = timingwheel.NewTimingWheel(time.Second, 3)
 	ts.Start()
 
-	InitConfig()
+	conf, err := InitConfig()
+	if err != nil {
+		panic(err)
+	}
+	config = *conf
 
 	if strings.HasPrefix(config.Casbin.UserPath, "http") {
 		userChecker = &NetGetUserByIDAndPasswordChecker{}
@@ -1317,25 +1326,37 @@ func (s *Server) Run() {
 }
 
 func (s *Server) Reload(server *Server, router *gin.Engine) {
-	InitConfig()
 	// 创建一个新的 Gin 引擎实例
-
-	server.Close()
-
 	newEngine := gin.Default()
-	newEngine.Use(Logger())
-	routerGroup := newEngine.Group(config.Server.Prefix)
-	server.router = newEngine
-	InitRouter(newEngine, routerGroup)
+	if conf, err := InitConfig(); err != nil {
+		logger.Println(fmt.Sprintf("(ERROR) Reload Failed:%v", err))
+		return
+	} else {
+		logger.Println(fmt.Sprintf("Reload Config:%v", conf))
+		newEngine.Use(Logger())
+		routerGroup := newEngine.Group(config.Server.Prefix)
+		server.router = newEngine
+		if err:=InitRouter(newEngine, routerGroup,*conf);err!=nil {
+			msg:=fmt.Sprintf("(ERROR) Reload Failed:%v", err)
+			fmt.Println(msg)
+			logger.Println(msg)
+			return
+		} else {
+			config = *conf
+			server.Close()
+		}
+
+	}
 	server.Server = &http.Server{
 		Addr:    fmt.Sprintf(":%v", config.Server.Port),
 		Handler: newEngine,
 	}
 	go func() {
-
 		if err := server.ListenAndServe(); err != nil {
 			logger.Println(err)
 
+		} else {
+			log.Println("Reload completed.")
 		}
 		time.Sleep(time.Millisecond * 100)
 
