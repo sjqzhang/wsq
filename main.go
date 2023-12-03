@@ -9,6 +9,7 @@ import (
 	"github.com/RussellLuo/timingwheel"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/casbin/casbin/v2"
+	fileadapter "github.com/casbin/casbin/v2/persist/file-adapter"
 	mapset "github.com/deckarep/golang-set"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,13 @@ type Response struct {
 	Msg  string      `json:"message"`
 }
 
+type Policy struct {
+	Ptype  string
+	Role   string
+	Path   string
+	Method string
+}
+
 type Server struct {
 	router *gin.Engine
 	*http.Server
@@ -95,8 +103,11 @@ type CommonMap struct {
 }
 
 type CasbinMiddleware struct {
-	enforcer   *casbin.Enforcer
-	middleWare func(c *gin.Context)
+	enforcer    *casbin.Enforcer
+	middleWare  func(c *gin.Context)
+	policies    []Policy
+	policiesMap mapset.Set
+	policyChan  chan Policy
 }
 
 func NewCommonMap() *CommonMap {
@@ -557,10 +568,9 @@ func InitServer() {
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
 
-	if err:=InitRouter(router, routerGroup,config);err!=nil {
+	if err := InitRouter(router, routerGroup, config); err != nil {
 		panic(err)
 	}
-
 
 	server = &Server{
 		router: router,
@@ -605,11 +615,11 @@ func InitServer() {
 	log.Println("Server exiting")
 }
 
-func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup,config Config) (errorInitRouter error) {
+func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config) (errorInitRouter error) {
 
 	defer func() {
 		if e := recover(); e != nil {
-			errorInitRouter =fmt.Errorf("%v", e)
+			errorInitRouter = fmt.Errorf("%v", e)
 			logger.Println(errorInitRouter)
 		}
 	}()
@@ -639,6 +649,21 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup,config Config) 
 		}
 		go readMessages(con)
 		go writeMessages(con)
+	})
+
+	router.Use(func(c *gin.Context) {
+		//c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		//c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		//c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		//c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+		policy := Policy{
+			Ptype:  "p",
+			Role:   "admin_role",
+			Path:   c.Request.RequestURI,
+			Method: c.Request.Method,
+		}
+		casbinMiddle.policyChan <- policy
+		c.Next()
 	})
 
 	//router.GET("/_reload", func(c *gin.Context) {
@@ -760,16 +785,77 @@ var ts *timingwheel.TimingWheel
 
 func InitCasbin() {
 
-	casbinMiddle = &CasbinMiddleware{}
+	casbinMiddle = &CasbinMiddleware{
+		policies:    make([]Policy, 0),
+		policiesMap: mapset.NewSet(),
+		policyChan:  make(chan Policy, 1000),
+	}
 
 	// Casbin 中间件配置
 	modelPath := config.Casbin.ModelPath
 	policyPath := config.Casbin.PolicyPath
 
-	e, err := casbin.NewEnforcer(modelPath, policyPath)
+	// load policy from file to server's policies
+	var policies []Policy
+	data, err := ioutil.ReadFile(policyPath)
 	if err != nil {
 		panic(err)
 	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		parts := strings.Split(line, ",")
+		for i, p := range parts {
+			parts[i] = strings.TrimSpace(p)
+		}
+		if len(parts) == 3 {
+			policies = append(policies, Policy{
+				Ptype: parts[0],
+				Role:  parts[1],
+				Path:  parts[2],
+			})
+		}
+		if len(parts) == 4 {
+			policies = append(policies, Policy{
+				Ptype:  parts[0],
+				Role:   parts[1],
+				Path:   parts[2],
+				Method: parts[3],
+			})
+		}
+	}
+	casbinMiddle.policies = policies
+
+	adapter := fileadapter.NewAdapter(policyPath)
+
+	e, err := casbin.NewEnforcer(modelPath, adapter)
+
+	if err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for policy := range casbinMiddle.policyChan {
+			key := fmt.Sprintf("%s,%s,%s,%s", policy.Ptype, policy.Role, policy.Path, policy.Method)
+			if casbinMiddle.policiesMap.Contains(key) {
+				continue
+			}
+			casbinMiddle.policiesMap.Add(policy)
+			casbinMiddle.policies = append(casbinMiddle.policies, policy)
+			e.AddPolicy(policy.Role, policy.Path, policy.Method)
+
+			// 保存casbinMiddle.policies策略到文件
+			var pp []string
+			for _, p := range casbinMiddle.policies {
+				if p.Method == "" {
+					pp = append(pp, fmt.Sprintf("%s,%s,%s", p.Ptype, p.Role, p.Path))
+				} else {
+					pp = append(pp, fmt.Sprintf("%s,%s,%s,%s", p.Ptype, p.Role, p.Path, p.Method))
+				}
+
+			}
+			ioutil.WriteFile(policyPath, []byte(strings.Join(pp, "\n")), 0644)
+		}
+	}()
 
 	casbinMiddle.enforcer = e
 	casbinMiddle.middleWare = func(c *gin.Context) {
@@ -1327,6 +1413,8 @@ func (s *Server) Run() {
 
 func (s *Server) Reload(server *Server, router *gin.Engine) {
 	// 创建一个新的 Gin 引擎实例
+	InitJwt()
+	InitCasbin()
 	newEngine := gin.Default()
 	if conf, err := InitConfig(); err != nil {
 		logger.Println(fmt.Sprintf("(ERROR) Reload Failed:%v", err))
@@ -1336,8 +1424,8 @@ func (s *Server) Reload(server *Server, router *gin.Engine) {
 		newEngine.Use(Logger())
 		routerGroup := newEngine.Group(config.Server.Prefix)
 		server.router = newEngine
-		if err:=InitRouter(newEngine, routerGroup,*conf);err!=nil {
-			msg:=fmt.Sprintf("(ERROR) Reload Failed:%v", err)
+		if err := InitRouter(newEngine, routerGroup, *conf); err != nil {
+			msg := fmt.Sprintf("(ERROR) Reload Failed:%v", err)
 			fmt.Println(msg)
 			logger.Println(msg)
 			return
