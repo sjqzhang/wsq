@@ -123,7 +123,7 @@ def configx_sync_permission():
 def configx_sync_config():
     from configx_add_namespace import sync_apollo_config
     data = request.get_json()
-    sync_permission(data['appid'])
+    sync_apollo_config(data['appid'])
     return data
 
 @app.route('/configx/update_operation_by_jira', methods=['POST'])
