@@ -727,7 +727,9 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 				return
 			}
 			proxy := httputil.NewSingleHostReverseProxy(uri)
-
+			for k, v := range forwardCfg.Header {
+				c.Request.Header.Set(k, v)
+			}
 			// 更改请求的主机头
 			c.Request.Host = uri.Host
 			c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), uri.Path)
@@ -797,6 +799,7 @@ func InitCasbin() {
 
 	// load policy from file to server's policies
 	var policies []Policy
+	var policiesRole []Policy
 	data, err := ioutil.ReadFile(policyPath)
 	if err != nil {
 		panic(err)
@@ -808,13 +811,25 @@ func InitCasbin() {
 			parts[i] = strings.TrimSpace(p)
 		}
 		if len(parts) == 3 {
-			policies = append(policies, Policy{
+			key:= fmt.Sprintf("%s,%s,%s", parts[0], parts[1], parts[2])
+			if casbinMiddle.policiesMap.Contains(key) {
+				continue
+			} else {
+				casbinMiddle.policiesMap.Add(key)
+			}
+			policiesRole = append(policiesRole, Policy{
 				Ptype: parts[0],
 				Role:  parts[1],
 				Path:  parts[2],
 			})
 		}
 		if len(parts) == 4 {
+			key:= fmt.Sprintf("%s,%s,%s,%s", parts[0], parts[1], parts[2], parts[3])
+			if casbinMiddle.policiesMap.Contains(key) {
+				continue
+			} else {
+				casbinMiddle.policiesMap.Add(key)
+			}
 			policies = append(policies, Policy{
 				Ptype:  parts[0],
 				Role:   parts[1],
@@ -835,6 +850,9 @@ func InitCasbin() {
 
 	go func() {
 		for policy := range casbinMiddle.policyChan {
+			if !config.Server.Debug {
+				continue
+			}
 			key := fmt.Sprintf("%s,%s,%s,%s", policy.Ptype, policy.Role, policy.Path, policy.Method)
 			if casbinMiddle.policiesMap.Contains(key) {
 				continue
@@ -852,6 +870,9 @@ func InitCasbin() {
 					pp = append(pp, fmt.Sprintf("%s,%s,%s,%s", p.Ptype, p.Role, p.Path, p.Method))
 				}
 
+			}
+			for _, p := range policiesRole {
+				pp = append(pp, fmt.Sprintf("%s,%s,%s", p.Ptype, p.Role, p.Path))
 			}
 			ioutil.WriteFile(policyPath, []byte(strings.Join(pp, "\n")), 0644)
 		}
@@ -1374,6 +1395,9 @@ func (s *Server) HandlerNoRoute(c *gin.Context) {
 
 			c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), targetURL.Path)
 			// 更改请求的主机头
+			for k, v := range forwardCfg.Header {
+				c.Request.Header.Set(k, v)
+			}
 			c.Request.Host = targetURL.Host
 			c.Request.RequestURI = c.Request.URL.Path
 
