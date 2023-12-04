@@ -120,7 +120,7 @@ def configx_sync_permission():
 
 
 @app.route('/configx/sync_config', methods=['POST'])
-def configx_sync_permission():
+def configx_sync_config():
     from configx_add_namespace import sync_apollo_config
     data = request.get_json()
     sync_permission(data['appid'])
