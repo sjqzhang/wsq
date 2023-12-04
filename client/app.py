@@ -118,6 +118,14 @@ def configx_sync_permission():
     sync_permission(data['appid'])
     return data
 
+
+@app.route('/configx/sync_config', methods=['POST'])
+def configx_sync_permission():
+    from configx_add_namespace import sync_apollo_config
+    data = request.get_json()
+    sync_permission(data['appid'])
+    return data
+
 @app.route('/configx/update_operation_by_jira', methods=['POST'])
 def configx_update_operation_by_jira():
     from configx_connection import update_operation_by_jira
