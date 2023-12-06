@@ -702,7 +702,8 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 	router.POST("/refresh_token", authMiddleware.RefreshHandler)
 	router.POST("/logout", authMiddleware.LogoutHandler)
 
-	for _, forwardCfg := range config.ForwardConfig {
+	for _, cfg := range config.ForwardConfig {
+		forwardCfg:=cfg
 		prefix := forwardCfg.Prefix
 		if !strings.HasPrefix(prefix, "/") {
 			prefix = "/" + prefix
