@@ -154,6 +154,7 @@ type Config struct {
 		Port   int    `mapstructure:"port" yaml:"port"`
 		Prefix string `mapstructure:"prefix" yaml:"prefix"`
 		Debug  bool   `mapstructure:"debug" yaml:"debug"`
+		SaveCasbinPolicy bool `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
 	} `yaml:"server"`
 	EmbedRedis struct {
 		Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -224,10 +225,12 @@ func InitConfig() (*Config, error) {
 					Port   int    `mapstructure:"port" yaml:"port"`
 					Prefix string `mapstructure:"prefix" yaml:"prefix"`
 					Debug  bool   `mapstructure:"debug" yaml:"debug"`
+					SaveCasbinPolicy bool `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
 				}{
 					Port:   8866,
 					Prefix: "/ws",
 					Debug:  true,
+					SaveCasbinPolicy: true,
 				},
 				EmbedRedis: struct {
 					Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -850,7 +853,7 @@ func InitCasbin() {
 
 	go func() {
 		for policy := range casbinMiddle.policyChan {
-			if !config.Server.Debug {
+			if !config.Server.SaveCasbinPolicy {
 				continue
 			}
 			key := fmt.Sprintf("%s,%s,%s,%s", policy.Ptype, policy.Role, policy.Path, policy.Method)
