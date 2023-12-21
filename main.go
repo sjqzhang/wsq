@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -149,12 +150,24 @@ func (m *CommonMap) LoadAll() map[string]interface{} {
 	return r
 }
 
+type ForwardConfig struct {
+	Prefix      string `yaml:"prefix" mapstructure:"prefix"`
+	Forward     string `yaml:"forward" mapstructure:"forward"`
+	Default     bool   `yaml:"default" mapstructure:"default"`
+	RequireAuth bool   `yaml:"require_auth" mapstructure:"require_auth"`
+	User        struct {
+		Username string `yaml:"username" mapstructure:"username"`
+		Password string `yaml:"password" mapstructure:"password"`
+	} `yaml:"user"`
+	Header map[string]string `yaml:"header" mapstructure:"header"`
+}
+
 type Config struct {
 	Server struct {
-		Port   int    `mapstructure:"port" yaml:"port"`
-		Prefix string `mapstructure:"prefix" yaml:"prefix"`
-		Debug  bool   `mapstructure:"debug" yaml:"debug"`
-		SaveCasbinPolicy bool `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
+		Port             int    `mapstructure:"port" yaml:"port"`
+		Prefix           string `mapstructure:"prefix" yaml:"prefix"`
+		Debug            bool   `mapstructure:"debug" yaml:"debug"`
+		SaveCasbinPolicy bool   `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
 	} `yaml:"server"`
 	EmbedRedis struct {
 		Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -172,18 +185,8 @@ type Config struct {
 		DB       int    `mapstructure:"db" yaml:"db"`
 	} `yaml:"redis"`
 
-	ForwardConfig []struct {
-		Prefix      string `yaml:"prefix" mapstructure:"prefix"`
-		Forward     string `yaml:"forward" mapstructure:"forward"`
-		Default     bool   `yaml:"default" mapstructure:"default"`
-		RequireAuth bool   `yaml:"require_auth" mapstructure:"require_auth"`
-		User        struct {
-			Username string `yaml:"username" mapstructure:"username"`
-			Password string `yaml:"password" mapstructure:"password"`
-		} `yaml:"user"`
-		Header map[string]string `yaml:"header" mapstructure:"header"`
-	} `yaml:"forwardConfig"`
-	Jwt struct {
+	ForwardConfig []ForwardConfig `yaml:"forwardConfig"`
+	Jwt           struct {
 		Algorithm     string `mapstructure:"algorithm" yaml:"algorithm"`
 		SigningKey    string `mapstructure:"signing_key" yaml:"signing_key"`
 		Timeout       int    `mapstructure:"timeout" yaml:"timeout"`
@@ -222,14 +225,14 @@ func InitConfig() (*Config, error) {
 			// 如果配置文件不存在，则生成模板
 			conf = Config{
 				Server: struct {
-					Port   int    `mapstructure:"port" yaml:"port"`
-					Prefix string `mapstructure:"prefix" yaml:"prefix"`
-					Debug  bool   `mapstructure:"debug" yaml:"debug"`
-					SaveCasbinPolicy bool `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
+					Port             int    `mapstructure:"port" yaml:"port"`
+					Prefix           string `mapstructure:"prefix" yaml:"prefix"`
+					Debug            bool   `mapstructure:"debug" yaml:"debug"`
+					SaveCasbinPolicy bool   `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
 				}{
-					Port:   8866,
-					Prefix: "/ws",
-					Debug:  true,
+					Port:             8866,
+					Prefix:           "/ws",
+					Debug:            true,
 					SaveCasbinPolicy: true,
 				},
 				EmbedRedis: struct {
@@ -259,17 +262,7 @@ func InitConfig() (*Config, error) {
 					Password: "",
 					DB:       0,
 				},
-				ForwardConfig: []struct {
-					Prefix      string `yaml:"prefix" mapstructure:"prefix"`
-					Forward     string `yaml:"forward" mapstructure:"forward"`
-					Default     bool   `yaml:"default" mapstructure:"default"`
-					RequireAuth bool   `yaml:"require_auth" mapstructure:"require_auth"`
-					User        struct {
-						Username string `yaml:"username" mapstructure:"username"`
-						Password string `yaml:"password" mapstructure:"password"`
-					} `yaml:"user"`
-					Header map[string]string `yaml:"header" mapstructure:"header"`
-				}{
+				ForwardConfig: []ForwardConfig{
 					{
 						Prefix:      "/v2",
 						Forward:     "http://127.0.0.1:5000",
@@ -703,12 +696,12 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 	router.POST("/logout", authMiddleware.LogoutHandler)
 
 	for _, cfg := range config.ForwardConfig {
-		forwardCfg:=cfg
+		forwardCfg := cfg
 		prefix := forwardCfg.Prefix
 		if !strings.HasPrefix(prefix, "/") {
 			prefix = "/" + prefix
 		}
-		targetURL := forwardCfg.Forward
+		//targetURL := forwardCfg.Forward
 
 		var middlewares []gin.HandlerFunc
 		if forwardCfg.RequireAuth {
@@ -724,23 +717,30 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 		middlewares = append(middlewares, func(c *gin.Context) {
 			// 创建反向代理
 
-			uri, err := url.Parse(targetURL)
-			if err != nil {
-				logger.Println(err)
-				c.Writer.Write([]byte(err.Error()))
+			if isWebSocketRequest(c.Request) {
+				proxyWebSocket(c,cfg)
 				return
 			}
-			proxy := httputil.NewSingleHostReverseProxy(uri)
-			for k, v := range forwardCfg.Header {
-				c.Request.Header.Set(k, v)
-			}
-			// 更改请求的主机头
-			c.Request.Host = uri.Host
-			c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), uri.Path)
-			c.Request.RequestURI = c.Request.URL.Path
 
-			// 将请求转发到目标URL
-			proxy.ServeHTTP(c.Writer, c.Request)
+			proxyHTTP(c,cfg)
+
+			//uri, err := url.Parse(targetURL)
+			//if err != nil {
+			//	logger.Println(err)
+			//	c.Writer.Write([]byte(err.Error()))
+			//	return
+			//}
+			//proxy := httputil.NewSingleHostReverseProxy(uri)
+			//for k, v := range forwardCfg.Header {
+			//	c.Request.Header.Set(k, v)
+			//}
+			//// 更改请求的主机头
+			//c.Request.Host = uri.Host
+			//c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), uri.Path)
+			//c.Request.RequestURI = c.Request.URL.Path
+			//
+			//// 将请求转发到目标URL
+			//proxy.ServeHTTP(c.Writer, c.Request)
 		})
 
 		// 注册转发路由
@@ -815,7 +815,7 @@ func InitCasbin() {
 			parts[i] = strings.TrimSpace(p)
 		}
 		if len(parts) == 3 {
-			key:= fmt.Sprintf("%s,%s,%s", parts[0], parts[1], parts[2])
+			key := fmt.Sprintf("%s,%s,%s", parts[0], parts[1], parts[2])
 			if casbinMiddle.policiesMap.Contains(key) {
 				continue
 			} else {
@@ -828,7 +828,7 @@ func InitCasbin() {
 			})
 		}
 		if len(parts) == 4 {
-			key:= fmt.Sprintf("%s,%s,%s,%s", parts[0], parts[1], parts[2], parts[3])
+			key := fmt.Sprintf("%s,%s,%s,%s", parts[0], parts[1], parts[2], parts[3])
 			if casbinMiddle.policiesMap.Contains(key) {
 				continue
 			} else {
@@ -1389,32 +1389,119 @@ func Logger() gin.HandlerFunc {
 var addr = flag.String("addr", ":8866", "http service address")
 
 func (s *Server) HandlerNoRoute(c *gin.Context) {
+	// 检查是否有匹配的 WebSocket 代理配置
 	for _, forwardCfg := range config.ForwardConfig {
 		if forwardCfg.Default {
-
-			// 创建代理服务器的目标URL
-			targetURL, _ := url.Parse(forwardCfg.Forward)
-			// 创建反向代理
-			proxy := httputil.NewSingleHostReverseProxy(targetURL)
-
-			c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), targetURL.Path)
-			// 更改请求的主机头
-			for k, v := range forwardCfg.Header {
-				c.Request.Header.Set(k, v)
+			// 检查请求是否是 WebSocket 连接
+			if isWebSocketRequest(c.Request) {
+				// 进行 WebSocket 代理
+				proxyWebSocket(c, forwardCfg)
+				return
 			}
-			c.Request.Host = targetURL.Host
-			c.Request.RequestURI = c.Request.URL.Path
+		}
+	}
 
-			// 将请求转发到代理服务器
-			proxy.ServeHTTP(c.Writer, c.Request)
+	// 检查是否有匹配的 HTTP 代理配置
+	for _, forwardCfg := range config.ForwardConfig {
+		if forwardCfg.Default {
+			// 进行 HTTP 代理
+			proxyHTTP(c, forwardCfg)
 			return
 		}
 	}
+
+	// 如果没有匹配的代理配置，返回 404 Not Found
 	c.JSON(http.StatusNotFound, gin.H{
 		"code": 404,
 		"msg":  "not found",
 	})
+}
 
+// 检查请求是否是 WebSocket 连接
+func isWebSocketRequest(req *http.Request) bool {
+	return strings.ToLower(req.Header.Get("Connection")) == "upgrade" &&
+		strings.ToLower(req.Header.Get("Upgrade")) == "websocket"
+}
+
+// WebSocket 代理
+func proxyWebSocket(c *gin.Context, forwardCfg ForwardConfig) {
+	// 创建 WebSocket 连接
+	//upgrader := websocket.Upgrader{}
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Println("WebSocket upgrade failed:", err)
+		return
+	}
+	defer conn.Close()
+
+	// 创建自定义的 Dialer
+	dialer := &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,             // 使用 ProxyFromEnvironment 获取代理配置
+		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true}, // 忽略证书验证
+		HandshakeTimeout: 45 * time.Second,
+	}
+
+	// 连接到目标 WebSocket 服务器 replace http:// -> ws:// and replace https:// -> wss://
+
+	forwardURL:= strings.Replace( forwardCfg.Forward,"https://","wss://",1)
+	forwardURL= strings.Replace( forwardURL,"http://","ws://",1)
+
+	targetURL, _ := url.Parse(forwardURL)
+	targetConn, _, err := dialer.Dial(targetURL.String(), nil)
+	if err != nil {
+		log.Println("Failed to connect to target WebSocket server:", err)
+		return
+	}
+	defer targetConn.Close()
+
+	// 在两个连接之间进行消息转发
+	go func() {
+		for {
+			messageType, message, err := conn.ReadMessage()
+			if err != nil {
+				log.Println("Failed to read message from client:", err)
+				return
+			}
+			err = targetConn.WriteMessage(messageType, message)
+			if err != nil {
+				log.Println("Failed to send message to target server:", err)
+				return
+			}
+		}
+	}()
+
+	for {
+		messageType, message, err := targetConn.ReadMessage()
+		if err != nil {
+			log.Println("Failed to read message from target server:", err)
+			return
+		}
+		err = conn.WriteMessage(messageType, message)
+		if err != nil {
+			log.Println("Failed to send message to client:", err)
+			return
+		}
+	}
+}
+
+// HTTP 代理
+func proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
+	targetURL, _ := url.Parse(forwardCfg.Forward)
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+	c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), targetURL.Path)
+	for k, v := range forwardCfg.Header {
+		c.Request.Header.Set(k, v)
+	}
+	c.Request.Host = targetURL.Host
+	c.Request.RequestURI = c.Request.URL.Path
+
+	// 忽略证书验证
+	proxy.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
 func (s *Server) HandlerWebSocketResponse(c *gin.Context) {
