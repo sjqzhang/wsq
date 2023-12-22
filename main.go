@@ -170,6 +170,8 @@ type Config struct {
 		Prefix           string `mapstructure:"prefix" yaml:"prefix"`
 		Debug            bool   `mapstructure:"debug" yaml:"debug"`
 		SaveCasbinPolicy bool   `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
+		EmbedWebsocket   bool   `mapstructure:"embed_websocket" yaml:"embed_websocket"`
+		EnableAuth       bool   `mapstructure:"enable_auth" yaml:"enable_auth"`
 	} `yaml:"server"`
 	EmbedRedis struct {
 		Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -231,11 +233,15 @@ func InitConfig() (*Config, error) {
 					Prefix           string `mapstructure:"prefix" yaml:"prefix"`
 					Debug            bool   `mapstructure:"debug" yaml:"debug"`
 					SaveCasbinPolicy bool   `mapstructure:"save_casbin_policy" yaml:"save_casbin_policy"`
+					EmbedWebsocket   bool   `mapstructure:"embed_websocket" yaml:"embed_websocket"`
+					EnableAuth       bool   `mapstructure:"enable_auth" yaml:"enable_auth"`
 				}{
 					Port:             8866,
 					Prefix:           "/ws",
 					Debug:            true,
 					SaveCasbinPolicy: true,
+					EmbedWebsocket:   true,
+					EnableAuth:       true,
 				},
 				EmbedRedis: struct {
 					Addr     string `mapstructure:"addr" yaml:"addr"`
@@ -623,67 +629,52 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 		}
 	}()
 
-	if config.Server.Prefix != "" && config.Server.Prefix != "/" {
-		router.GET("/", func(c *gin.Context) {
-			body, err := ioutil.ReadFile("home.html")
+	if config.Server.EmbedWebsocket {
+
+		if config.Server.Prefix != "" && config.Server.Prefix != "/" {
+			router.GET("/", func(c *gin.Context) {
+				body, err := ioutil.ReadFile("home.html")
+				if err != nil {
+					logger.Println(err)
+					return
+				}
+				c.Writer.Write(body)
+
+			})
+		}
+		routerGroup.GET("", func(c *gin.Context) {
+			conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 			if err != nil {
-				logger.Println(err)
+				logger.Println("Failed to upgrade connection:", err)
 				return
 			}
-			c.Writer.Write(body)
-
+			con := &Conn{
+				Conn:       conn,
+				RWMutex:    sync.RWMutex{},
+				send:       make(chan WSMessage, 1000),
+				createTime: time.Now().Unix(),
+			}
+			go readMessages(con)
+			go writeMessages(con)
 		})
+
+		router.Use(func(c *gin.Context) {
+			//c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+			//c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			//c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+			//c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+			policy := Policy{
+				Ptype:  "p",
+				Role:   "admin_role",
+				Path:   c.Request.RequestURI,
+				Method: c.Request.Method,
+			}
+			casbinMiddle.policyChan <- policy
+			c.Next()
+		})
+		routerGroup.POST("/api", server.HandlerWebSocketResponse)
 	}
-	routerGroup.GET("", func(c *gin.Context) {
-		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-		if err != nil {
-			logger.Println("Failed to upgrade connection:", err)
-			return
-		}
-		con := &Conn{
-			Conn:       conn,
-			RWMutex:    sync.RWMutex{},
-			send:       make(chan WSMessage, 1000),
-			createTime: time.Now().Unix(),
-		}
-		go readMessages(con)
-		go writeMessages(con)
-	})
 
-	router.Use(func(c *gin.Context) {
-		//c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		//c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		//c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		//c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
-		policy := Policy{
-			Ptype:  "p",
-			Role:   "admin_role",
-			Path:   c.Request.RequestURI,
-			Method: c.Request.Method,
-		}
-		casbinMiddle.policyChan <- policy
-		c.Next()
-	})
-
-	//router.GET("/_reload", func(c *gin.Context) {
-	//
-	//	//ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	//	//defer cancel()
-	//	//if errorInitRouter := server.Shutdown(ctx); errorInitRouter != nil {
-	//	//	logger.Println("(WARNING)Server shutdown:", errorInitRouter)
-	//	//
-	//	//}
-	//	//go server.Shutdown(context.Background())
-	//
-	//	server.sigChan <- syscall.SIGHUP
-	//
-	//	return
-	//})
-	routerGroup.POST("/login", authMiddleware.LoginHandler)
-	routerGroup.POST("/refresh_token", authMiddleware.RefreshHandler)
-	routerGroup.POST("/logout", authMiddleware.LogoutHandler)
-
-	routerGroup.POST("/api", server.HandlerWebSocketResponse)
 	var middlewares []gin.HandlerFunc
 	if config.Jwt.Enable {
 		middlewares = append(middlewares, authMiddleware.MiddlewareFunc())
@@ -693,10 +684,11 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 	}
 	middlewares = append(middlewares, server.HandlerNoRoute)
 	router.NoRoute(middlewares...)
-
-	router.POST("/login", authMiddleware.LoginHandler)
-	router.POST("/refresh_token", authMiddleware.RefreshHandler)
-	router.POST("/logout", authMiddleware.LogoutHandler)
+	if config.Server.EnableAuth {
+		router.POST("/login", authMiddleware.LoginHandler)
+		router.POST("/refresh_token", authMiddleware.RefreshHandler)
+		router.POST("/logout", authMiddleware.LogoutHandler)
+	}
 
 	for _, cfg := range config.ForwardConfig {
 		forwardCfg := cfg
@@ -747,12 +739,12 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 		})
 
 		// 注册转发路由
-		if prefix == "/" || prefix == "" {
-			cfg, _ := json.Marshal(forwardCfg)
-			msg := fmt.Sprintf("(ERROR)prefix can't be empty.\nforwardCfg:%v", string(cfg))
-			logger.Println(msg)
-			panic(msg)
-		}
+		// if prefix == "/" || prefix == "" {
+		// 	cfg, _ := json.Marshal(forwardCfg)
+		// 	msg := fmt.Sprintf("(ERROR)prefix can't be empty.\nforwardCfg:%v", string(cfg))
+		// 	logger.Println(msg)
+		// 	panic(msg)
+		// }
 		router.Any(prefix+"/*path", middlewares...)
 	}
 	return errorInitRouter
@@ -773,7 +765,7 @@ func InitRedis() {
 	rs.DB(config.EmbedRedis.DB)
 
 	if err := rs.StartAddr(config.EmbedRedis.Addr); err != nil {
-		panic(err)
+		//panic(err)
 	}
 
 	go func() {
