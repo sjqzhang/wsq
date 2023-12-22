@@ -7,6 +7,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os/signal"
+	"syscall"
+
 	"github.com/RussellLuo/timingwheel"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/casbin/casbin/v2"
@@ -22,11 +25,7 @@ import (
 	"github.com/sjqzhang/requests"
 	"github.com/spf13/viper"
 	"gopkg.in/natefinch/lumberjack.v2"
-	"os/signal"
-	"syscall"
 
-	jwt "github.com/appleboy/gin-jwt/v2"
-	"gopkg.in/yaml.v3"
 	"io/ioutil"
 	"log"
 	"net"
@@ -35,6 +34,9 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+
+	jwt "github.com/appleboy/gin-jwt/v2"
+	"gopkg.in/yaml.v3"
 
 	"strings"
 	"sync"
@@ -221,7 +223,7 @@ func InitConfig() (*Config, error) {
 	if err != nil {
 
 		// 检查配置文件是否存在
-		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+		if os.IsNotExist(err) {
 			// 如果配置文件不存在，则生成模板
 			conf = Config{
 				Server: struct {
@@ -322,6 +324,7 @@ func InitConfig() (*Config, error) {
 			// 将配置数据转换为YAML格式
 			configBytes, err := yaml.Marshal(&config)
 			if err != nil {
+				fmt.Println(err)
 				return nil, err
 			}
 
@@ -718,11 +721,11 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 			// 创建反向代理
 
 			if isWebSocketRequest(c.Request) {
-				proxyWebSocket(c,cfg)
+				proxyWebSocket(c, cfg)
 				return
 			}
 
-			proxyHTTP(c,cfg)
+			proxyHTTP(c, cfg)
 
 			//uri, err := url.Parse(targetURL)
 			//if err != nil {
@@ -1443,8 +1446,8 @@ func proxyWebSocket(c *gin.Context, forwardCfg ForwardConfig) {
 
 	// 连接到目标 WebSocket 服务器 replace http:// -> ws:// and replace https:// -> wss://
 
-	forwardURL:= strings.Replace( forwardCfg.Forward,"https://","wss://",1)
-	forwardURL= strings.Replace( forwardURL,"http://","ws://",1)
+	forwardURL := strings.Replace(forwardCfg.Forward, "https://", "wss://", 1)
+	forwardURL = strings.Replace(forwardURL, "http://", "ws://", 1)
 
 	targetURL, _ := url.Parse(forwardURL)
 	targetConn, _, err := dialer.Dial(targetURL.String(), nil)
