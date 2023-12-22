@@ -322,7 +322,7 @@ func InitConfig() (*Config, error) {
 			}
 
 			// 将配置数据转换为YAML格式
-			configBytes, err := yaml.Marshal(&config)
+			configBytes, err := yaml.Marshal(&conf)
 			if err != nil {
 				fmt.Println(err)
 				return nil, err
