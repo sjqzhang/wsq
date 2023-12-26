@@ -713,11 +713,11 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 			// 创建反向代理
 
 			if isWebSocketRequest(c.Request) {
-				proxyWebSocket(c, cfg)
+				proxyWebSocket(c, forwardCfg)
 				return
 			}
 
-			proxyHTTP(c, cfg)
+			proxyHTTP(c, forwardCfg)
 
 			//uri, err := url.Parse(targetURL)
 			//if err != nil {
