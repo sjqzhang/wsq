@@ -73,7 +73,9 @@ type Policy struct {
 type Server struct {
 	router *gin.Engine
 	*http.Server
-	sigChan chan os.Signal
+	sigChan       chan os.Signal
+	//transportOnce sync.Once
+	transport     *http.Transport
 }
 
 func response(code int, data interface{}, msg string) []byte {
@@ -573,17 +575,18 @@ func InitServer() {
 	wd, _ := os.Getwd()
 	os.Chdir(wd + "/examples/message")
 
-	if err := InitRouter(router, routerGroup, config); err != nil {
-		panic(err)
-	}
-
 	server = &Server{
 		router: router,
 		Server: &http.Server{
 			Addr:    fmt.Sprintf(":%v", config.Server.Port),
 			Handler: router,
 		},
-		sigChan: make(chan os.Signal, 1),
+		sigChan:   make(chan os.Signal, 1),
+		transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+
+	if err := InitRouter(server, router, routerGroup, config); err != nil {
+		panic(err)
 	}
 
 	signal.Notify(server.sigChan, syscall.SIGHUP)
@@ -620,7 +623,7 @@ func InitServer() {
 	log.Println("Server exiting")
 }
 
-func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config) (errorInitRouter error) {
+func InitRouter(server *Server, router *gin.Engine, routerGroup *gin.RouterGroup, config Config) (errorInitRouter error) {
 
 	defer func() {
 		if e := recover(); e != nil {
@@ -713,11 +716,11 @@ func InitRouter(router *gin.Engine, routerGroup *gin.RouterGroup, config Config)
 			// 创建反向代理
 
 			if isWebSocketRequest(c.Request) {
-				proxyWebSocket(c, forwardCfg)
+				server.proxyWebSocket(c, forwardCfg)
 				return
 			}
 
-			proxyHTTP(c, forwardCfg)
+			server.proxyHTTP(c, forwardCfg)
 
 			//uri, err := url.Parse(targetURL)
 			//if err != nil {
@@ -1390,7 +1393,7 @@ func (s *Server) HandlerNoRoute(c *gin.Context) {
 			// 检查请求是否是 WebSocket 连接
 			if isWebSocketRequest(c.Request) {
 				// 进行 WebSocket 代理
-				proxyWebSocket(c, forwardCfg)
+				s.proxyWebSocket(c, forwardCfg)
 				return
 			}
 		}
@@ -1400,7 +1403,7 @@ func (s *Server) HandlerNoRoute(c *gin.Context) {
 	for _, forwardCfg := range config.ForwardConfig {
 		if forwardCfg.Default {
 			// 进行 HTTP 代理
-			proxyHTTP(c, forwardCfg)
+			s.proxyHTTP(c, forwardCfg)
 			return
 		}
 	}
@@ -1419,7 +1422,7 @@ func isWebSocketRequest(req *http.Request) bool {
 }
 
 // WebSocket 代理
-func proxyWebSocket(c *gin.Context, forwardCfg ForwardConfig) {
+func (s *Server) proxyWebSocket(c *gin.Context, forwardCfg ForwardConfig) {
 	// 创建 WebSocket 连接
 	//upgrader := websocket.Upgrader{}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -1480,20 +1483,44 @@ func proxyWebSocket(c *gin.Context, forwardCfg ForwardConfig) {
 }
 
 // HTTP 代理
-func proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
+func (s *Server) proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
+	//targetURL, _ := url.Parse(forwardCfg.Forward)
+	//proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	//
+	//c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), targetURL.Path)
+	//for k, v := range forwardCfg.Header {
+	//	c.Request.Header.Set(k, v)
+	//}
+	//c.Request.Host = targetURL.Host
+	//c.Request.RequestURI = c.Request.URL.Path
+	//
+	//// 忽略证书验证
+	//proxy.Transport = &http.Transport{
+	//	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	//}
+	//
+	//proxy.ServeHTTP(c.Writer, c.Request)
+
 	targetURL, _ := url.Parse(forwardCfg.Forward)
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
-	c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), targetURL.Path)
-	for k, v := range forwardCfg.Header {
-		c.Request.Header.Set(k, v)
-	}
-	c.Request.Host = targetURL.Host
-	c.Request.RequestURI = c.Request.URL.Path
+	//s.transportOnce.Do(func() {
+	//	// 创建共享的 http.Transport 实例
+	//	s.transport = &http.Transport{
+	//		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	//	}
+	//})
 
-	// 忽略证书验证
-	proxy.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = targetURL.Scheme
+			req.URL.Host = targetURL.Host
+			req.URL.Path = strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, forwardCfg.Prefix), targetURL.Path)
+			for k, v := range forwardCfg.Header {
+				req.Header.Set(k, v)
+			}
+			req.Host = targetURL.Host
+		},
+		Transport: s.transport, // 使用共享的 http.Transport 实例
 	}
 
 	proxy.ServeHTTP(c.Writer, c.Request)
@@ -1534,7 +1561,7 @@ func (s *Server) Reload(server *Server, router *gin.Engine) {
 		newEngine.Use(Logger())
 		routerGroup := newEngine.Group(config.Server.Prefix)
 		server.router = newEngine
-		if err := InitRouter(newEngine, routerGroup, *conf); err != nil {
+		if err := InitRouter(server, newEngine, routerGroup, *conf); err != nil {
 			msg := fmt.Sprintf("(ERROR) Reload Failed:%v", err)
 			fmt.Println(msg)
 			logger.Println(msg)
