@@ -1484,32 +1484,11 @@ func (s *Server) proxyWebSocket(c *gin.Context, forwardCfg ForwardConfig) {
 
 // HTTP 代理
 func (s *Server) proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
-	//targetURL, _ := url.Parse(forwardCfg.Forward)
-	//proxy := httputil.NewSingleHostReverseProxy(targetURL)
-	//
-	//c.Request.URL.Path = strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, forwardCfg.Prefix), targetURL.Path)
-	//for k, v := range forwardCfg.Header {
-	//	c.Request.Header.Set(k, v)
-	//}
-	//c.Request.Host = targetURL.Host
-	//c.Request.RequestURI = c.Request.URL.Path
-	//
-	//// 忽略证书验证
-	//proxy.Transport = &http.Transport{
-	//	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	//}
-	//
-	//proxy.ServeHTTP(c.Writer, c.Request)
-
-	targetURL, _ := url.Parse(forwardCfg.Forward)
-
-	//s.transportOnce.Do(func() {
-	//	// 创建共享的 http.Transport 实例
-	//	s.transport = &http.Transport{
-	//		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	//	}
-	//})
-
+	targetURL, err := url.Parse(forwardCfg.Forward)
+	if err!=nil {
+		log.Println("Failed to parse target URL:", err)
+		return
+	}
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = targetURL.Scheme
@@ -1522,7 +1501,6 @@ func (s *Server) proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
 		},
 		Transport: s.transport, // 使用共享的 http.Transport 实例
 	}
-
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
