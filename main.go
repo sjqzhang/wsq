@@ -73,9 +73,9 @@ type Policy struct {
 type Server struct {
 	router *gin.Engine
 	*http.Server
-	sigChan       chan os.Signal
+	sigChan chan os.Signal
 	//transportOnce sync.Once
-	transport     *http.Transport
+	transport *http.Transport
 }
 
 func response(code int, data interface{}, msg string) []byte {
@@ -581,8 +581,10 @@ func InitServer() {
 			Addr:    fmt.Sprintf(":%v", config.Server.Port),
 			Handler: router,
 		},
-		sigChan:   make(chan os.Signal, 1),
-		transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		sigChan: make(chan os.Signal, 1),
+		transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			Proxy: http.ProxyFromEnvironment,
+		},
 	}
 
 	if err := InitRouter(server, router, routerGroup, config); err != nil {
@@ -1485,7 +1487,7 @@ func (s *Server) proxyWebSocket(c *gin.Context, forwardCfg ForwardConfig) {
 // HTTP 代理
 func (s *Server) proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
 	targetURL, err := url.Parse(forwardCfg.Forward)
-	if err!=nil {
+	if err != nil {
 		log.Println("Failed to parse target URL:", err)
 		return
 	}
@@ -1493,7 +1495,10 @@ func (s *Server) proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
 		Director: func(req *http.Request) {
 			req.URL.Scheme = targetURL.Scheme
 			req.URL.Host = targetURL.Host
-			req.URL.Path = strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, forwardCfg.Prefix), targetURL.Path)
+			if !strings.HasSuffix(targetURL.Path, "/") {
+				targetURL.Path = targetURL.Path + "/"
+			}
+			req.URL.Path = targetURL.Path + strings.TrimPrefix(req.URL.Path, forwardCfg.Prefix)
 			for k, v := range forwardCfg.Header {
 				req.Header.Set(k, v)
 			}
