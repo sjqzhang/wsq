@@ -1500,8 +1500,9 @@ func (s *Server) proxyHTTP(c *gin.Context, forwardCfg ForwardConfig) {
 			}
 			old:=req.URL.Path
 			req.URL.Path = targetURL.Path + strings.TrimPrefix(req.URL.Path, forwardCfg.Prefix)
+			req.URL.Path=strings.Replace(req.URL.Path,"//","/",-1)
 			if config.Server.Debug {
-				fmt.Println(fmt.Sprintf("URL Rewrite:%v->%v", old,req.URL.Path))
+				fmt.Println(fmt.Sprintf("URL Rewrite:%v -> %v", old,req.URL.Path))
 			}
 			for k, v := range forwardCfg.Header {
 				req.Header.Set(k, v)
